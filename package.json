@@ -10,7 +10,7 @@
   "scripts": {
     "build": "tsc",
     "watch": "tsc -w",
-    "clean": "timraf .cache lib",
+    "clean": "rimraf .cache lib",
     "pub": "npm publish --access public"
   },
   "keywords": [
