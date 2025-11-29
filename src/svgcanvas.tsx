@@ -31,6 +31,31 @@ export function useSvgCanvas() {
 	return React.useContext(SvgCanvasContext)
 }
 
+/**
+ * Context exposed to consumers via onContextReady callback
+ */
+export interface SvgCanvasContext {
+	svg: SVGSVGElement | undefined
+	matrix: [number, number, number, number, number, number]
+	scale: number
+	translateTo: (x: number, y: number) => [number, number]
+	translateFrom: (x: number, y: number) => [number, number]
+}
+
+/**
+ * Imperative handle for SvgCanvas
+ */
+export interface SvgCanvasHandle {
+	/** Center the viewport on a specific point in canvas coordinates */
+	centerOn: (x: number, y: number, zoom?: number) => void
+	/** Center the viewport on a rectangle (fitting it in view) */
+	centerOnRect: (x: number, y: number, width: number, height: number, padding?: number) => void
+	/** Get current matrix */
+	getMatrix: () => [number, number, number, number, number, number]
+	/** Set matrix directly */
+	setMatrix: (matrix: [number, number, number, number, number, number]) => void
+}
+
 ///////////////
 // SvgCanvas //
 ///////////////
@@ -42,6 +67,8 @@ interface SvgCanvasProps {
 	onToolStart?: (e: ToolEvent) => void
 	onToolMove?: (e: ToolEvent) => void
 	onToolEnd?: () => void
+	/** Callback fired when the canvas context is ready or changes (zoom, pan, etc.) */
+	onContextReady?: (context: SvgCanvasContext) => void
 }
 
 interface DragHandler {
@@ -49,15 +76,16 @@ interface DragHandler {
 	onDragEnd?: () => void
 }
 
-export function SvgCanvas({
+export const SvgCanvas = React.forwardRef<SvgCanvasHandle, SvgCanvasProps>(function SvgCanvas({
 	className,
 	style,
 	children,
 	fixed,
 	onToolStart,
 	onToolMove,
-	onToolEnd
-}: SvgCanvasProps) {
+	onToolEnd,
+	onContextReady
+}, ref) {
 	const svgRef = React.useRef<SVGSVGElement>(null)
 	const [active, setActive] = React.useState<undefined>()
 	const [pan, setPan] = React.useState<{ lastX: number, lastY: number } | undefined>()
@@ -72,7 +100,6 @@ export function SvgCanvas({
 	}, [matrix])
 
 	const translateFrom = React.useCallback(function translateFrom(x: number, y: number): [number, number] {
-		console.log('translateFrom matrix', matrix)
 		return [x * matrix[0] + matrix[4], y * matrix[3] + matrix[5]]
 	}, [matrix])
 
@@ -93,6 +120,59 @@ export function SvgCanvas({
 		setDragHandler,
 		startDrag
 	}), [svgRef.current, matrix])
+
+	// Call onContextReady callback when context changes
+	React.useEffect(() => {
+		if (onContextReady) {
+			onContextReady({
+				svg: svgRef.current || undefined,
+				matrix,
+				scale: matrix[0],
+				translateTo,
+				translateFrom
+			})
+		}
+	}, [onContextReady, matrix, translateTo, translateFrom])
+
+	// Expose imperative handle
+	React.useImperativeHandle(ref, () => ({
+		centerOn: (x: number, y: number, zoom?: number) => {
+			const svg = svgRef.current
+			if (!svg) return
+
+			const rect = svg.getBoundingClientRect()
+			const centerX = rect.width / 2
+			const centerY = rect.height / 2
+			const scale = zoom ?? matrix[0]
+
+			setMatrix([scale, 0, 0, scale, centerX - x * scale, centerY - y * scale])
+		},
+		centerOnRect: (x: number, y: number, width: number, height: number, padding = 50) => {
+			const svg = svgRef.current
+			if (!svg) return
+
+			const rect = svg.getBoundingClientRect()
+			const availableWidth = rect.width - padding * 2
+			const availableHeight = rect.height - padding * 2
+
+			// Calculate scale to fit the rectangle
+			const scaleX = availableWidth / width
+			const scaleY = availableHeight / height
+			const scale = Math.min(scaleX, scaleY, 2) // Cap at 2x zoom
+
+			// Center of the target rectangle
+			const targetCenterX = x + width / 2
+			const targetCenterY = y + height / 2
+
+			// Center of the viewport
+			const viewCenterX = rect.width / 2
+			const viewCenterY = rect.height / 2
+
+			setMatrix([scale, 0, 0, scale, viewCenterX - targetCenterX * scale, viewCenterY - targetCenterY * scale])
+		},
+		getMatrix: () => matrix,
+		setMatrix: (newMatrix) => setMatrix(newMatrix)
+	}), [matrix])
 
 	function transformTouchEvent(evt: React.TouchEvent) {
 		if (!svgRef.current) return { x: 0, y: 0 }
@@ -153,20 +233,11 @@ export function SvgCanvas({
 	function onMouseMove(evt: React.MouseEvent) {
 		if (!evt.buttons) return
 		evt.preventDefault()
-		evt.stopPropagation()
+		// Don't stopPropagation - allow window event listeners to work
 
-		console.log('onMouseMove', dragHandler, toolStart)
 		if (dragHandler && toolStart) {
 			const e = transformMouseEvent(evt)
 			dragHandler.onDragMove({ x: e.x, y: e.y, startX: toolStart.startX, startY: toolStart.startY })
-		/*
-		} else if (drag) {
-			const e = transformMouseEvent(evt)
-			if (e?.buttons == 1 && drag.target) {
-				let scale = matrix[0]
-			} else return onDragEnd()
-			setDrag(drag => drag ? { ...drag, lastX: e.x, lastY: e.y } : undefined)
-		*/
 		} else if (pan) {
 			if (evt.buttons == 4) {
 				// Pan
@@ -177,18 +248,20 @@ export function SvgCanvas({
 				setMatrix(matrix => [matrix[0], matrix[1], matrix[2], matrix[3], matrix[4] + dx, matrix[5] + dy])
 				setPan({lastX: x, lastY: y})
 				evt.stopPropagation()
-			} else return onDragEnd()
+			} else {
+				onDragEnd()
+			}
 		} else if (onToolMove && toolStart) {
 			const e = transformMouseEvent(evt)
 			if (e) {
 				onToolMove({ x: e.x, y: e.y, startX: toolStart.startX, startY: toolStart.startY })
 			}
-		} else return onDragEnd()
+		}
+		// Don't call onDragEnd when nothing was started - allows external handlers (like resize) to work
 	}
 
 	function onTouchMove(evt: React.TouchEvent) {
 		evt.stopPropagation()
-		console.log('touchMove', evt)
 		if (evt.touches.length == 1) {
 			if (dragHandler && toolStart) {
 				const e = transformTouchEvent(evt)
@@ -290,6 +363,6 @@ export function SvgCanvas({
 			<g>{fixed}</g>
 		</svg>
 	</SvgCanvasContext.Provider>
-}
+})
 
 // vim: ts=4
