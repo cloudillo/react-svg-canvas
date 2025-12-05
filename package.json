@@ -1,6 +1,6 @@
 {
   "name": "react-svg-canvas",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "React SVG Canvas",
   "type": "module",
   "main": "lib/index.js",
@@ -8,6 +8,7 @@
     "lib"
   ],
   "scripts": {
+    "ts": "tsc --noEmit",
     "build": "tsc",
     "watch": "tsc -w",
     "clean": "rimraf .cache lib",
@@ -23,7 +24,7 @@
   "devDependencies": {
     "@types/react": "^19.2.7",
     "@types/react-dom": "^19.2.3",
-    "react-dom": "^19.2.0",
+    "react-dom": "^19.2.1",
     "rimraf": "^6.1.2",
     "typescript": "^5.9.3"
   },
