@@ -24,7 +24,7 @@ export interface SelectionBoxProps {
 	handleFillHover?: string
 	handleStroke?: string
 	// Callbacks
-	onResizeStart?: (handle: ResizeHandleType, e: React.MouseEvent) => void
+	onResizeStart?: (handle: ResizeHandleType, e: React.PointerEvent) => void
 }
 
 export function SelectionBox({
@@ -76,11 +76,12 @@ export function SelectionBox({
 					handle={handle}
 					x={x}
 					y={y}
+					rotation={rotation}
 					size={handleSize}
 					fill={handleFill}
 					fillHover={handleFillHover}
 					stroke={effectiveHandleStroke}
-					onMouseDown={onResizeStart}
+					onPointerDown={onResizeStart}
 				/>
 			))}
 		</g>

@@ -37,6 +37,36 @@ export const RESIZE_CURSORS: Record<ResizeHandle, string> = {
 	w: 'ew-resize'
 }
 
+// Base angles for each handle (clockwise from north)
+const HANDLE_BASE_ANGLES: Record<ResizeHandle, number> = {
+	n: 0,
+	ne: 45,
+	e: 90,
+	se: 135,
+	s: 180,
+	sw: 225,
+	w: 270,
+	nw: 315
+}
+
+// Cursor types in clockwise order (repeating every 45°)
+const CURSOR_ORDER = ['ns-resize', 'nesw-resize', 'ew-resize', 'nwse-resize'] as const
+
+/**
+ * Get the appropriate cursor for a resize handle accounting for object rotation.
+ * When an object is rotated, the visual direction of each handle changes,
+ * so the cursor should match the rotated direction.
+ */
+export function getRotatedCursor(handle: ResizeHandle, rotation: number): string {
+	const baseAngle = HANDLE_BASE_ANGLES[handle]
+	// Add rotation and normalize to 0-360
+	const effectiveAngle = ((baseAngle + rotation) % 360 + 360) % 360
+	// Each cursor covers 45°, centered on its primary angle
+	// Add 22.5 to shift the boundaries (so 0° ± 22.5° maps to index 0)
+	const cursorIndex = Math.floor((effectiveAngle + 22.5) / 45) % 4
+	return CURSOR_ORDER[cursorIndex]
+}
+
 // Handle position type
 export interface HandlePosition {
 	handle: ResizeHandle

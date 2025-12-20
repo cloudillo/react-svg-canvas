@@ -4,34 +4,37 @@
 
 import React from 'react'
 import type { ResizeHandle as ResizeHandleType } from '../types'
-import { RESIZE_CURSORS } from '../types'
+import { getRotatedCursor } from '../types'
 
 export interface ResizeHandleProps {
 	handle: ResizeHandleType
 	x: number
 	y: number
+	rotation?: number // Object rotation in degrees, for cursor adjustment
 	size?: number
 	fill?: string
 	fillHover?: string
 	stroke?: string
 	strokeWidth?: number
 	strokeWidthHover?: number
-	onMouseDown?: (handle: ResizeHandleType, e: React.MouseEvent) => void
+	onPointerDown?: (handle: ResizeHandleType, e: React.PointerEvent) => void
 }
 
 export function ResizeHandle({
 	handle,
 	x,
 	y,
+	rotation = 0,
 	size = 8,
 	fill = '#ffffff',
 	fillHover = '#0066ff',
 	stroke = '#0066ff',
 	strokeWidth = 1,
 	strokeWidthHover = 2,
-	onMouseDown
+	onPointerDown
 }: ResizeHandleProps) {
 	const [isHovered, setIsHovered] = React.useState(false)
+	const cursor = getRotatedCursor(handle, rotation)
 
 	return (
 		<rect
@@ -42,13 +45,13 @@ export function ResizeHandle({
 			fill={isHovered ? fillHover : fill}
 			stroke={stroke}
 			strokeWidth={isHovered ? strokeWidthHover : strokeWidth}
-			style={{ cursor: RESIZE_CURSORS[handle] }}
+			style={{ cursor }}
 			onMouseEnter={() => setIsHovered(true)}
 			onMouseLeave={() => setIsHovered(false)}
-			onMouseDown={(e) => {
+			onPointerDown={(e) => {
 				e.stopPropagation()
 				e.preventDefault()
-				onMouseDown?.(handle, e)
+				onPointerDown?.(handle, e)
 			}}
 		/>
 	)
