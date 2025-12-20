@@ -24,7 +24,7 @@ pnpm add react-svg-canvas
 yarn add react-svg-canvas
 ```
 
-**Peer Dependencies:** React 19.x
+**Peer Dependencies:** React 18+
 
 ## Quick Start
 
@@ -154,14 +154,17 @@ function Canvas({ objects }: { objects: MyObject[] }) {
   const {
     selectedIds,
     selectedObjects,
+    selectionCount,
     selectionBounds,
     hasSelection,
     select,
     selectMultiple,
+    deselect,
     toggle,
     clear,
     selectAll,
     selectInRect,
+    setSelection,
     isSelected
   } = useSelection({ objects, onChange: (ids) => console.log('Selection:', ids) })
 
@@ -303,6 +306,27 @@ function Canvas({ objects }) {
       {/* Your objects */}
     </SvgCanvas>
   )
+}
+```
+
+#### useGrabPoint
+
+Helper hook for calculating the normalized grab point when dragging objects.
+
+```tsx
+import { useGrabPoint } from 'react-svg-canvas'
+
+function MyDraggable({ bounds }) {
+  const { setGrabPoint, getGrabPoint } = useGrabPoint()
+
+  function handleDragStart(mousePos) {
+    setGrabPoint(mousePos, bounds)
+  }
+
+  function handleDrag(delta) {
+    const grabPoint = getGrabPoint()  // Returns { x: 0-1, y: 0-1 }
+    // Use with snapDrag...
+  }
 }
 ```
 
@@ -488,6 +512,13 @@ interface SpatialObject {
   bounds: Bounds
 }
 
+interface ToolEvent {
+  startX: number
+  startY: number
+  x: number
+  y: number
+}
+
 type ResizeHandle = 'nw' | 'n' | 'ne' | 'e' | 'se' | 's' | 'sw' | 'w'
 ```
 
@@ -569,7 +600,7 @@ function Editor() {
 
 ## Browser Support
 
-- Modern browsers with ES2020 support
+- Modern browsers with ES2021 support
 - Touch devices (iOS Safari, Android Chrome)
 
 ## License

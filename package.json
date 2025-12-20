@@ -1,9 +1,19 @@
 {
   "name": "react-svg-canvas",
-  "version": "0.0.2",
-  "description": "React SVG Canvas",
+  "version": "0.1.0",
+  "description": "React library for building interactive SVG canvas applications with pan, zoom, selection, drag-and-drop, resize, and Figma-style snapping",
   "type": "module",
   "main": "lib/index.js",
+  "module": "lib/index.js",
+  "types": "lib/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/index.d.ts",
+      "import": "./lib/index.js",
+      "default": "./lib/index.js"
+    }
+  },
+  "sideEffects": false,
   "files": [
     "lib"
   ],
@@ -12,15 +22,38 @@
     "build": "tsc",
     "watch": "tsc -w",
     "clean": "rimraf .cache lib",
+    "prepublishOnly": "npm run build",
     "pub": "npm publish --access public"
   },
   "keywords": [
     "react",
     "svg",
-    "canvas"
+    "canvas",
+    "pan",
+    "zoom",
+    "drag-and-drop",
+    "selection",
+    "resize",
+    "snapping",
+    "interactive",
+    "editor",
+    "diagram",
+    "whiteboard",
+    "figma"
   ],
-  "author": "Szilard Hajba <szilu@symbion.hu>",
+  "author": "Szilard Hajba <szilard@cloudillo.org>",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/cloudillo/react-svg-canvas.git"
+  },
+  "homepage": "https://github.com/cloudillo/react-svg-canvas#readme",
+  "bugs": {
+    "url": "https://github.com/cloudillo/react-svg-canvas/issues"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
   "devDependencies": {
     "@types/react": "^19.2.7",
     "@types/react-dom": "^19.2.3",
@@ -29,6 +62,6 @@
     "typescript": "^5.9.3"
   },
   "peerDependencies": {
-    "react": "^19.2.0"
+    "react": ">=18.0.0"
   }
 }
