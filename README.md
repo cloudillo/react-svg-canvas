@@ -9,6 +9,7 @@ A React library for building interactive SVG canvas applications with pan, zoom,
 - **Selection System** - Multi-select, rectangle selection, selection bounds
 - **Drag & Drop** - Smooth dragging with window-level event handling
 - **Resize Handles** - 8-point resize with min/max constraints
+- **Rotation** - Object and group rotation with snap angles and pivot point manipulation
 - **Snapping** - Figma-style snapping to edges, centers, grid, and matching sizes
 - **Geometry Utilities** - Bounds operations, transforms, coordinate conversion
 - **Spatial Queries** - Hit testing, rectangle selection, culling
@@ -367,6 +368,189 @@ const config: SnapConfiguration = {
 
 ---
 
+### Rotation System
+
+Object and group rotation with visual snap zones and pivot point manipulation.
+
+#### useRotatable
+
+Provides rotation interaction with visual snap zones. When the pointer is within the inner portion of the rotation arc (default 75%), angles snap to predefined values.
+
+```tsx
+import { useRotatable, DEFAULT_SNAP_ANGLES } from 'react-svg-canvas'
+
+function RotatableObject({ bounds, rotation, onRotate }) {
+  const { translateTo, translateFrom } = useSvgCanvas()
+
+  const {
+    rotationState,
+    handleRotateStart,
+    rotateProps,
+    checkSnapZone,
+    arcRadius,
+    pivotPosition
+  } = useRotatable({
+    bounds,
+    rotation,
+    pivotX: 0.5,
+    pivotY: 0.5,
+    snapAngles: DEFAULT_SNAP_ANGLES,  // 15° intervals: [0, 15, 30, ...]
+    snapZoneRatio: 0.75,              // Inner 75% of arc triggers snapping
+    translateTo,
+    translateFrom,
+    screenSpaceSnapZone: true,        // Consistent UX at all zoom levels
+    onRotate: (angle, isSnapped) => onRotate(angle),
+    onRotateEnd: (angle) => console.log('Final:', angle)
+  })
+
+  return (
+    <g>
+      <rect {...bounds} />
+      <RotationHandle
+        position={pivotPosition}
+        arcRadius={arcRadius}
+        isInSnapZone={rotationState.isInSnapZone}
+        onPointerDown={handleRotateStart}
+        {...rotateProps}
+      />
+    </g>
+  )
+}
+```
+
+##### CRDT-Friendly State
+
+For collaborative editing with external state (e.g., Yjs), use getter functions to avoid stale closures:
+
+```tsx
+const { handleRotateStart } = useRotatable({
+  bounds,
+  rotation,
+  // Getters are called at drag start for fresh values
+  getBounds: () => yObject.get('bounds'),
+  getRotation: () => yObject.get('rotation'),
+  getPivot: () => ({ x: yObject.get('pivotX'), y: yObject.get('pivotY') }),
+  onRotate: (angle) => yObject.set('rotation', angle)
+})
+```
+
+#### usePivotDrag
+
+Drag interaction for manipulating an object's rotation pivot point.
+
+```tsx
+import { usePivotDrag, DEFAULT_PIVOT_SNAP_POINTS } from 'react-svg-canvas'
+
+function PivotHandle({ bounds, rotation, pivotX, pivotY, onPivotChange }) {
+  const { translateTo } = useSvgCanvas()
+
+  const {
+    pivotState,
+    handlePivotDragStart,
+    pivotDragProps,
+    getPositionCompensation
+  } = usePivotDrag({
+    bounds,
+    rotation,
+    pivotX,
+    pivotY,
+    snapPoints: DEFAULT_PIVOT_SNAP_POINTS,  // 9 points: corners, edges, center
+    snapThreshold: 0.08,
+    translateTo,
+    onDrag: (pivot, snappedPoint, positionCompensation) => {
+      // positionCompensation adjusts object position to keep it visually in place
+      onPivotChange(pivot, positionCompensation)
+    },
+    onDragEnd: (pivot, positionCompensation) => {
+      console.log('Final pivot:', pivot)
+    }
+  })
+
+  return (
+    <circle
+      cx={bounds.x + bounds.width * pivotX}
+      cy={bounds.y + bounds.height * pivotY}
+      r={6}
+      fill={pivotState.snappedPoint ? 'blue' : 'gray'}
+      onPointerDown={handlePivotDragStart}
+      {...pivotDragProps}
+    />
+  )
+}
+```
+
+#### useGroupPivot
+
+Manages a shared pivot point for rotating multiple selected objects together.
+
+```tsx
+import { useGroupPivot } from 'react-svg-canvas'
+
+function GroupRotationUI({ selectedObjects, selectionBounds }) {
+  const {
+    groupPivotState,
+    groupPivot,
+    handleGroupPivotDragStart,
+    groupPivotDragProps,
+    rotateObjectsAroundPivot,
+    resetPivotToCenter,
+    setGroupPivot
+  } = useGroupPivot({
+    objects: selectedObjects,  // Array of { id, bounds, rotation, pivotX?, pivotY? }
+    selectionBounds,
+    onRotate: (angle, transformedObjects) => {
+      // transformedObjects: { id, x, y, rotation }[]
+      updateObjects(transformedObjects)
+    }
+  })
+
+  return (
+    <>
+      {/* Pivot handle */}
+      <circle
+        cx={groupPivot.x}
+        cy={groupPivot.y}
+        r={8}
+        fill={groupPivotState.isPivotCustom ? 'orange' : 'white'}
+        onPointerDown={handleGroupPivotDragStart}
+        {...groupPivotDragProps}
+      />
+
+      {/* Reset button */}
+      <button onClick={resetPivotToCenter}>Reset Pivot</button>
+    </>
+  )
+}
+```
+
+#### Rotation Utilities
+
+```tsx
+import {
+  // Constants
+  DEFAULT_SNAP_ANGLES,           // [0, 15, 30, 45, ..., 345]
+  DEFAULT_SNAP_ZONE_RATIO,       // 0.75
+  DEFAULT_PIVOT_SNAP_THRESHOLD,  // 0.08
+
+  // Angle utilities
+  getAngleFromCenter,            // (center, point) => degrees
+  snapAngle,                     // (angle, snapAngles, isInSnapZone) => angle
+  findClosestSnapAngle,          // (angle, snapAngles) => snapAngle
+
+  // Pivot utilities
+  getPivotPosition,              // (bounds, pivotX, pivotY) => Point
+  calculatePivotCompensation,    // Position adjustment when pivot moves
+  canvasToPivot,                 // Convert canvas coords to normalized pivot
+  snapPivot,                     // Snap to nearest snap point
+
+  // Rotation transforms
+  rotatePointAroundCenter,       // (point, center, angleDeg) => Point
+  rotateObjectAroundPivot        // Transform object position during rotation
+} from 'react-svg-canvas'
+```
+
+---
+
 ### Geometry Utilities
 
 #### Bounds Operations
@@ -520,6 +704,30 @@ interface ToolEvent {
 }
 
 type ResizeHandle = 'nw' | 'n' | 'ne' | 'e' | 'se' | 's' | 'sw' | 'w'
+
+// Rotation types
+interface RotationState {
+  isRotating: boolean
+  startAngle: number
+  currentAngle: number
+  centerX: number
+  centerY: number
+  isInSnapZone: boolean
+}
+
+interface PivotState {
+  isDragging: boolean
+  pivotX: number           // 0-1 normalized
+  pivotY: number           // 0-1 normalized
+  snappedPoint: Point | null
+}
+
+interface GroupPivotState {
+  isDragging: boolean
+  pivotX: number           // Canvas coordinates
+  pivotY: number           // Canvas coordinates
+  isPivotCustom: boolean   // User moved pivot from default center
+}
 ```
 
 ---

@@ -91,6 +91,11 @@ export interface DragMoveEvent {
 	deltaY: number
 	clientX: number
 	clientY: number
+	// Snapping-related fields (present when snapDrag is provided)
+	/** Final position after snapping (same as x,y if no snapping) */
+	position?: Point
+	/** Grab point normalized to 0-1 within object bounds */
+	grabPoint?: Point
 }
 
 export interface DragEndEvent {
@@ -98,6 +103,9 @@ export interface DragEndEvent {
 	y: number
 	startX: number
 	startY: number
+	// Snapping-related fields (present when snapDrag is provided)
+	/** Final position after snapping (same as x,y if no snapping) */
+	position?: Point
 }
 
 // Resize event types

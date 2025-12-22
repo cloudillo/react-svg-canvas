@@ -22,6 +22,10 @@ export interface ToolEvent {
 	startY: number
 	x: number
 	y: number
+	shiftKey?: boolean
+	ctrlKey?: boolean
+	metaKey?: boolean
+	altKey?: boolean
 }
 
 //////////////////
@@ -67,6 +71,8 @@ interface SvgCanvasProps {
 	onToolStart?: (e: ToolEvent) => void
 	onToolMove?: (e: ToolEvent) => void
 	onToolEnd?: () => void
+	/** Callback fired on pointer move (for cursor tracking, etc.) */
+	onMove?: (e: ToolEvent) => void
 	/** Callback fired when the canvas context is ready or changes (zoom, pan, etc.) */
 	onContextReady?: (context: SvgCanvasContext) => void
 }
@@ -91,6 +97,7 @@ export const SvgCanvas = React.forwardRef<SvgCanvasHandle, SvgCanvasProps>(funct
 	onToolStart,
 	onToolMove,
 	onToolEnd,
+	onMove,
 	onContextReady
 }, ref) {
 	const svgRef = React.useRef<SVGSVGElement>(null)
@@ -185,11 +192,11 @@ export const SvgCanvas = React.forwardRef<SvgCanvasHandle, SvgCanvasProps>(funct
 	}), [matrix])
 
 	function transformPointerEvent(evt: React.PointerEvent) {
-		if (!svgRef.current) return { x: 0, y: 0 }
+		if (!svgRef.current) return { x: 0, y: 0, shiftKey: false, ctrlKey: false, metaKey: false, altKey: false }
 
 		const br = svgRef.current.getBoundingClientRect(),
 			[x, y] = translateTo(evt.clientX - br.left, evt.clientY - br.top)
-		return { buttons: evt.buttons, x, y }
+		return { buttons: evt.buttons, x, y, shiftKey: evt.shiftKey, ctrlKey: evt.ctrlKey, metaKey: evt.metaKey, altKey: evt.altKey }
 	}
 
 	function transformMouseEvent(evt: React.MouseEvent) {
@@ -244,7 +251,7 @@ export const SvgCanvas = React.forwardRef<SvgCanvasHandle, SvgCanvasProps>(funct
 					const e = transformPointerEvent(evt)
 					if (e) {
 						setToolStart({ startX: e.x, startY: e.y })
-						onToolStart({ startX: e.x, startY: e.y, x: e.x, y: e.y })
+						onToolStart({ startX: e.x, startY: e.y, x: e.x, y: e.y, shiftKey: e.shiftKey, ctrlKey: e.ctrlKey, metaKey: e.metaKey, altKey: e.altKey })
 					}
 				}
 				setActive(undefined)
@@ -259,7 +266,7 @@ export const SvgCanvas = React.forwardRef<SvgCanvasHandle, SvgCanvasProps>(funct
 				const e = transformPointerEvent(evt)
 				if (e) {
 					setToolStart({ startX: e.x, startY: e.y })
-					onToolStart({ startX: e.x, startY: e.y, x: e.x, y: e.y })
+					onToolStart({ startX: e.x, startY: e.y, x: e.x, y: e.y, shiftKey: e.shiftKey, ctrlKey: e.ctrlKey, metaKey: e.metaKey, altKey: e.altKey })
 				}
 			} else {
 				// No tool active - pan mode
@@ -332,6 +339,15 @@ export const SvgCanvas = React.forwardRef<SvgCanvasHandle, SvgCanvasProps>(funct
 			const e = transformPointerEvent(evt)
 			if (e) {
 				onToolMove({ x: e.x, y: e.y, startX: toolStart.startX, startY: toolStart.startY })
+			}
+		}
+
+		// Always call onMove for cursor tracking (when not panning/pinching)
+		// pointerCount <= 1 covers both hovering (0) and single pointer drag (1)
+		if (onMove && pointerCount <= 1 && !pan) {
+			const e = transformPointerEvent(evt)
+			if (e) {
+				onMove({ x: e.x, y: e.y, startX: e.x, startY: e.y })
 			}
 		}
 	}

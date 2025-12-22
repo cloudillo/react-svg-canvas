@@ -23,4 +23,7 @@ export * from './hooks'
 // Snapping system
 export * from './snapping'
 
+// Rotation system
+export * from './rotation'
+
 // vim: ts=4

@@ -91,4 +91,90 @@ export function radToDeg(radians: number): number {
 	return radians * 180 / Math.PI
 }
 
+/**
+ * Pre-calculated rotation matrix for performance.
+ * When performing multiple operations with the same rotation angle,
+ * this avoids redundant Math.cos/sin calls.
+ */
+export interface RotationMatrix {
+	degrees: number
+	radians: number
+	cos: number
+	sin: number
+}
+
+/**
+ * Create a rotation matrix from angle in degrees
+ */
+export function createRotationMatrix(degrees: number): RotationMatrix {
+	const radians = degrees * Math.PI / 180
+	return {
+		degrees,
+		radians,
+		cos: Math.cos(radians),
+		sin: Math.sin(radians)
+	}
+}
+
+/**
+ * Rotate a point around center using pre-calculated matrix
+ */
+export function rotatePointWithMatrix(
+	point: Point,
+	center: Point,
+	matrix: RotationMatrix
+): Point {
+	const dx = point.x - center.x
+	const dy = point.y - center.y
+	return {
+		x: center.x + dx * matrix.cos - dy * matrix.sin,
+		y: center.y + dx * matrix.sin + dy * matrix.cos
+	}
+}
+
+/**
+ * Un-rotate a point (inverse rotation) using pre-calculated matrix
+ */
+export function unrotatePointWithMatrix(
+	point: Point,
+	center: Point,
+	matrix: RotationMatrix
+): Point {
+	const dx = point.x - center.x
+	const dy = point.y - center.y
+	// Inverse rotation: use -sin instead of sin
+	return {
+		x: center.x + dx * matrix.cos + dy * matrix.sin,
+		y: center.y - dx * matrix.sin + dy * matrix.cos
+	}
+}
+
+/**
+ * Rotate a delta (vector) using pre-calculated matrix
+ */
+export function rotateDeltaWithMatrix(
+	dx: number,
+	dy: number,
+	matrix: RotationMatrix
+): [number, number] {
+	return [
+		dx * matrix.cos - dy * matrix.sin,
+		dx * matrix.sin + dy * matrix.cos
+	]
+}
+
+/**
+ * Un-rotate a delta (inverse rotation) using pre-calculated matrix
+ */
+export function unrotateDeltaWithMatrix(
+	dx: number,
+	dy: number,
+	matrix: RotationMatrix
+): [number, number] {
+	return [
+		dx * matrix.cos + dy * matrix.sin,
+		-dx * matrix.sin + dy * matrix.cos
+	]
+}
+
 // vim: ts=4

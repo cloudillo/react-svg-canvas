@@ -1,12 +1,59 @@
 /**
- * useResizable hook - provides resize interaction for selected objects
- * Uses window-level events for smooth resizing
+ * useResizable hook - provides rotation-aware resize interaction
+ * Uses Pointer Events API for unified mouse/touch/pen handling
+ *
+ * When rotation is provided, uses proper anchor point calculation
+ * to keep the opposite corner fixed during resize.
+ *
+ * When used inside SvgCanvas, automatically uses the canvas coordinate
+ * transform (translateTo) for correct pan/zoom handling.
  */
 
 import React from 'react'
 import type { Bounds, ResizeHandle, Point, ResizeStartEvent, ResizeMoveEvent, ResizeEndEvent } from '../types'
-import { resizeBounds } from '../geometry/bounds'
+import type { RotatedBounds, ActiveSnap, ScoredCandidate } from '../snapping/types'
 import { svgTransformCoordinates } from './useDraggable'
+import { useSvgCanvas } from '../svgcanvas'
+import {
+	type ResizeState,
+	initResizeState,
+	calculateResizeBounds
+} from '../geometry/resize'
+
+/**
+ * Create a transform function that uses SvgCanvas context if available
+ */
+function createCanvasTransform(
+	translateTo: ((x: number, y: number) => [number, number]) | undefined
+): (clientX: number, clientY: number, element: Element) => Point {
+	if (!translateTo) {
+		return svgTransformCoordinates
+	}
+	return (clientX: number, clientY: number, element: Element): Point => {
+		const rect = element.getBoundingClientRect()
+		const [x, y] = translateTo(clientX - rect.left, clientY - rect.top)
+		return { x, y }
+	}
+}
+
+/** Result from snap computation for resize */
+export interface SnapResizeResult {
+	bounds: Bounds
+	activeSnaps?: ActiveSnap[]
+	candidates?: ScoredCandidate[]
+}
+
+/** Parameters for snap resize function */
+export interface SnapResizeFn {
+	(params: {
+		originalBounds: RotatedBounds
+		currentBounds: RotatedBounds
+		objectId: string
+		handle: ResizeHandle
+		delta: Point
+		excludeIds?: Set<string>
+	}): SnapResizeResult
+}
 
 export interface UseResizableOptions {
 	/** Current bounds of the resizable object */
@@ -25,6 +72,41 @@ export interface UseResizableOptions {
 	disabled?: boolean
 	/** Custom coordinate transformer */
 	transformCoordinates?: (clientX: number, clientY: number, element: Element) => Point
+
+	// Rotation-aware resize options
+	/** Object rotation in degrees (default 0) */
+	rotation?: number
+	/** Pivot X (0-1 normalized), default 0.5 */
+	pivotX?: number
+	/** Pivot Y (0-1 normalized), default 0.5 */
+	pivotY?: number
+
+	// Snapping integration
+	/** Unique identifier for the object being resized */
+	objectId?: string
+	/** Snap function from useSnapping hook */
+	snapResize?: SnapResizeFn
+
+	/**
+	 * Optional getter for fresh bounds at resize start.
+	 * Use this when working with CRDT/external state to avoid stale closures.
+	 * If provided, this is called at resize start and its return value is used
+	 * instead of the `bounds` prop.
+	 */
+	getBounds?: () => Bounds
+	/**
+	 * Optional getter for fresh rotation at resize start.
+	 * Use this when working with CRDT/external state to avoid stale closures.
+	 * If provided, this is called at resize start and its return value is used
+	 * instead of the `rotation` prop.
+	 */
+	getRotation?: () => number
+	/**
+	 * Optional getter for fresh pivot at resize start.
+	 * Use this when working with CRDT/external state to avoid stale closures.
+	 * Returns { x: pivotX, y: pivotY } in normalized coordinates (0-1).
+	 */
+	getPivot?: () => Point
 }
 
 export interface UseResizableReturn {
@@ -33,37 +115,55 @@ export interface UseResizableReturn {
 	/** Which handle is active */
 	activeHandle: ResizeHandle | null
 	/** Handler to start resize from a handle */
-	handleResizeStart: (handle: ResizeHandle, e: React.MouseEvent) => void
+	handleResizeStart: (handle: ResizeHandle, e: React.PointerEvent) => void
 }
 
 export function useResizable(options: UseResizableOptions): UseResizableReturn {
 	const {
 		bounds,
-		minWidth = 1,
-		minHeight = 1,
+		minWidth = 10,
+		minHeight = 10,
 		onResizeStart,
 		onResize,
 		onResizeEnd,
 		disabled = false,
-		transformCoordinates = svgTransformCoordinates
+		transformCoordinates: customTransformCoordinates,
+		rotation = 0,
+		pivotX = 0.5,
+		pivotY = 0.5,
+		objectId,
+		snapResize
 	} = options
+
+	// Get SvgCanvas context for automatic coordinate transformation
+	const canvasContext = useSvgCanvas()
+
+	// Use canvas context transform if available, otherwise fall back to custom or default
+	const transformCoordinates = React.useMemo(
+		() => customTransformCoordinates ?? createCanvasTransform(canvasContext.translateTo),
+		[customTransformCoordinates, canvasContext.translateTo]
+	)
 
 	const [isResizing, setIsResizing] = React.useState(false)
 	const [activeHandle, setActiveHandle] = React.useState<ResizeHandle | null>(null)
 
 	// Refs for stable state in event handlers
 	const stateRef = React.useRef<{
-		handle: ResizeHandle
-		startX: number
-		startY: number
-		originalBounds: Bounds
+		resizeState: ResizeState | null
 		element: Element | null
-	} | null>(null)
+		pointerId: number
+		currentBounds: Bounds  // Track current bounds for final commit
+	}>({
+		resizeState: null,
+		element: null,
+		pointerId: -1,
+		currentBounds: { x: 0, y: 0, width: 0, height: 0 }
+	})
 
 	const optionsRef = React.useRef(options)
 	optionsRef.current = options
 
-	const handleResizeStart = React.useCallback((handle: ResizeHandle, e: React.MouseEvent) => {
+	const handleResizeStart = React.useCallback((handle: ResizeHandle, e: React.PointerEvent) => {
 		if (disabled) return
 
 		e.preventDefault()
@@ -75,15 +175,25 @@ export function useResizable(options: UseResizableOptions): UseResizableReturn {
 			: target
 		const coords = transformCoordinates(e.clientX, e.clientY, element)
 
-		const state = {
+		// Get current options
+		const { bounds, rotation = 0, pivotX = 0.5, pivotY = 0.5 } = optionsRef.current
+
+		// Initialize rotation-aware resize state
+		const resizeState = initResizeState(
+			{ x: coords.x, y: coords.y },
 			handle,
-			startX: coords.x,
-			startY: coords.y,
-			originalBounds: { ...bounds },
-			element
+			bounds,
+			{ x: pivotX, y: pivotY },
+			rotation
+		)
+
+		stateRef.current = {
+			resizeState,
+			element,
+			pointerId: e.pointerId,
+			currentBounds: { ...bounds }
 		}
 
-		stateRef.current = state
 		setIsResizing(true)
 		setActiveHandle(handle)
 
@@ -92,56 +202,92 @@ export function useResizable(options: UseResizableOptions): UseResizableReturn {
 			bounds: { ...bounds }
 		})
 
-		const handleMouseMove = (moveEvent: MouseEvent) => {
-			const currentState = stateRef.current
-			if (!currentState || !currentState.element) return
+		const handlePointerMove = (moveEvent: PointerEvent) => {
+			const { resizeState, element, pointerId } = stateRef.current
+			if (!resizeState || !element || moveEvent.pointerId !== pointerId) return
 
-			const moveCoords = optionsRef.current.transformCoordinates?.(
+			const opts = optionsRef.current
+			const moveCoords = opts.transformCoordinates?.(
 				moveEvent.clientX,
 				moveEvent.clientY,
-				currentState.element
-			) ?? transformCoordinates(moveEvent.clientX, moveEvent.clientY, currentState.element)
+				element
+			) ?? transformCoordinates(moveEvent.clientX, moveEvent.clientY, element)
 
-			const deltaX = moveCoords.x - currentState.startX
-			const deltaY = moveCoords.y - currentState.startY
+			// Calculate delta for snapping
+			const deltaX = moveCoords.x - resizeState.startX
+			const deltaY = moveCoords.y - resizeState.startY
 
-			const newBounds = resizeBounds(
-				currentState.originalBounds,
-				currentState.handle,
-				deltaX,
-				deltaY,
-				optionsRef.current.minWidth ?? 1,
-				optionsRef.current.minHeight ?? 1
+			// Calculate new bounds (rotation-aware)
+			let newBounds = calculateResizeBounds(
+				resizeState,
+				{ x: moveCoords.x, y: moveCoords.y },
+				opts.minWidth ?? 10,
+				opts.minHeight ?? 10
 			)
 
-			optionsRef.current.onResize?.({
-				handle: currentState.handle,
+			// Apply snapping if available
+			if (opts.snapResize && opts.objectId) {
+				const snapResult = opts.snapResize({
+					originalBounds: {
+						...resizeState.originalBounds,
+						rotation: opts.rotation ?? 0,
+						pivotX: opts.pivotX ?? 0.5,
+						pivotY: opts.pivotY ?? 0.5
+					},
+					currentBounds: {
+						...newBounds,
+						rotation: opts.rotation ?? 0,
+						pivotX: opts.pivotX ?? 0.5,
+						pivotY: opts.pivotY ?? 0.5
+					},
+					objectId: opts.objectId,
+					handle: resizeState.handle,
+					delta: { x: deltaX, y: deltaY },
+					excludeIds: new Set([opts.objectId])
+				})
+				newBounds = snapResult.bounds
+			}
+
+			// Track current bounds for final commit
+			stateRef.current.currentBounds = newBounds
+
+			opts.onResize?.({
+				handle: resizeState.handle,
 				bounds: newBounds,
-				originalBounds: currentState.originalBounds
+				originalBounds: resizeState.originalBounds
 			})
 		}
 
-		const handleMouseUp = () => {
-			const currentState = stateRef.current
-			if (currentState) {
+		const handlePointerUp = (upEvent: PointerEvent) => {
+			const { resizeState, currentBounds, pointerId } = stateRef.current
+			if (upEvent.pointerId !== pointerId) return
+
+			if (resizeState) {
 				optionsRef.current.onResizeEnd?.({
-					handle: currentState.handle,
-					bounds: optionsRef.current.bounds,
-					originalBounds: currentState.originalBounds
+					handle: resizeState.handle,
+					bounds: currentBounds,
+					originalBounds: resizeState.originalBounds
 				})
 			}
 
-			stateRef.current = null
+			stateRef.current = {
+				resizeState: null,
+				element: null,
+				pointerId: -1,
+				currentBounds: { x: 0, y: 0, width: 0, height: 0 }
+			}
 			setIsResizing(false)
 			setActiveHandle(null)
 
-			window.removeEventListener('mousemove', handleMouseMove)
-			window.removeEventListener('mouseup', handleMouseUp)
+			window.removeEventListener('pointermove', handlePointerMove)
+			window.removeEventListener('pointerup', handlePointerUp)
+			window.removeEventListener('pointercancel', handlePointerUp)
 		}
 
-		window.addEventListener('mousemove', handleMouseMove)
-		window.addEventListener('mouseup', handleMouseUp)
-	}, [disabled, bounds, transformCoordinates, onResizeStart])
+		window.addEventListener('pointermove', handlePointerMove)
+		window.addEventListener('pointerup', handlePointerUp)
+		window.addEventListener('pointercancel', handlePointerUp)
+	}, [disabled, bounds, transformCoordinates, onResizeStart, rotation, pivotX, pivotY])
 
 	return {
 		isResizing,
