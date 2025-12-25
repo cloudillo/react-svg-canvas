@@ -107,6 +107,19 @@ export interface UseResizableOptions {
 	 * Returns { x: pivotX, y: pivotY } in normalized coordinates (0-1).
 	 */
 	getPivot?: () => Point
+
+	// Aspect ratio constraint
+	/**
+	 * Aspect ratio constraint (width/height).
+	 * When provided, resize maintains this ratio.
+	 * For images, typically originalWidth / originalHeight.
+	 */
+	aspectRatio?: number
+	/**
+	 * Optional getter for fresh aspect ratio at resize start.
+	 * Use this when working with CRDT/external state to avoid stale closures.
+	 */
+	getAspectRatio?: () => number | undefined
 }
 
 export interface UseResizableReturn {
@@ -153,11 +166,13 @@ export function useResizable(options: UseResizableOptions): UseResizableReturn {
 		element: Element | null
 		pointerId: number
 		currentBounds: Bounds  // Track current bounds for final commit
+		aspectRatio: number | undefined  // Captured at resize start
 	}>({
 		resizeState: null,
 		element: null,
 		pointerId: -1,
-		currentBounds: { x: 0, y: 0, width: 0, height: 0 }
+		currentBounds: { x: 0, y: 0, width: 0, height: 0 },
+		aspectRatio: undefined
 	})
 
 	const optionsRef = React.useRef(options)
@@ -187,11 +202,15 @@ export function useResizable(options: UseResizableOptions): UseResizableReturn {
 			rotation
 		)
 
+		// Capture aspect ratio at resize start (from getter if provided, else from prop)
+		const aspectRatio = optionsRef.current.getAspectRatio?.() ?? optionsRef.current.aspectRatio
+
 		stateRef.current = {
 			resizeState,
 			element,
 			pointerId: e.pointerId,
-			currentBounds: { ...bounds }
+			currentBounds: { ...bounds },
+			aspectRatio
 		}
 
 		setIsResizing(true)
@@ -203,7 +222,7 @@ export function useResizable(options: UseResizableOptions): UseResizableReturn {
 		})
 
 		const handlePointerMove = (moveEvent: PointerEvent) => {
-			const { resizeState, element, pointerId } = stateRef.current
+			const { resizeState, element, pointerId, aspectRatio } = stateRef.current
 			if (!resizeState || !element || moveEvent.pointerId !== pointerId) return
 
 			const opts = optionsRef.current
@@ -217,12 +236,13 @@ export function useResizable(options: UseResizableOptions): UseResizableReturn {
 			const deltaX = moveCoords.x - resizeState.startX
 			const deltaY = moveCoords.y - resizeState.startY
 
-			// Calculate new bounds (rotation-aware)
+			// Calculate new bounds (rotation-aware, with aspect ratio constraint if provided)
 			let newBounds = calculateResizeBounds(
 				resizeState,
 				{ x: moveCoords.x, y: moveCoords.y },
 				opts.minWidth ?? 10,
-				opts.minHeight ?? 10
+				opts.minHeight ?? 10,
+				aspectRatio
 			)
 
 			// Apply snapping if available
@@ -274,7 +294,8 @@ export function useResizable(options: UseResizableOptions): UseResizableReturn {
 				resizeState: null,
 				element: null,
 				pointerId: -1,
-				currentBounds: { x: 0, y: 0, width: 0, height: 0 }
+				currentBounds: { x: 0, y: 0, width: 0, height: 0 },
+				aspectRatio: undefined
 			}
 			setIsResizing(false)
 			setActiveHandle(null)

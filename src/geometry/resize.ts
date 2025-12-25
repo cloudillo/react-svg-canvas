@@ -50,6 +50,28 @@ export function getRotatedAnchorPosition(
 }
 
 /**
+ * Determine which dimension should drive the resize for aspect ratio constraint.
+ * For edge handles, the edge determines the driver.
+ * For corner handles, use proportional change to determine which dimension drives.
+ */
+export function getDriverDimension(
+	handle: ResizeHandle,
+	localDx: number,
+	localDy: number,
+	originalWidth: number,
+	originalHeight: number
+): 'width' | 'height' {
+	// Edge handles: the edge determines the driver
+	if (handle === 'e' || handle === 'w') return 'width'
+	if (handle === 'n' || handle === 's') return 'height'
+
+	// Corner handles: use proportional change to determine driver
+	const propX = Math.abs(localDx) / originalWidth
+	const propY = Math.abs(localDy) / originalHeight
+	return propX >= propY ? 'width' : 'height'
+}
+
+/**
  * Calculate new size based on handle and mouse delta in object-local space.
  */
 export function calculateResizedDimensions(
@@ -189,13 +211,15 @@ export function initResizeState(
  * @param currentPoint - Current mouse/pointer position in canvas coords
  * @param minWidth - Minimum allowed width (default 10)
  * @param minHeight - Minimum allowed height (default 10)
+ * @param aspectRatio - Optional aspect ratio constraint (width/height). When provided, resize maintains this ratio.
  * @returns New bounds with position adjusted to keep anchor fixed
  */
 export function calculateResizeBounds(
 	state: ResizeState,
 	currentPoint: Point,
 	minWidth: number = 10,
-	minHeight: number = 10
+	minHeight: number = 10,
+	aspectRatio?: number
 ): Bounds {
 	// Calculate screen delta
 	const screenDx = currentPoint.x - state.startX
@@ -204,7 +228,7 @@ export function calculateResizeBounds(
 	// Un-rotate to get local (object space) delta
 	const [localDx, localDy] = unrotateDeltaWithMatrix(screenDx, screenDy, state.rotationMatrix)
 
-	// Calculate new dimensions
+	// Calculate new dimensions (unconstrained first)
 	let { width, height } = calculateResizedDimensions(
 		state.handle,
 		state.originalBounds.width,
@@ -213,9 +237,44 @@ export function calculateResizeBounds(
 		localDy
 	)
 
-	// Enforce minimum size
-	width = Math.max(width, minWidth)
-	height = Math.max(height, minHeight)
+	// Apply aspect ratio constraint if provided
+	if (aspectRatio !== undefined) {
+		const driver = getDriverDimension(
+			state.handle,
+			localDx,
+			localDy,
+			state.originalBounds.width,
+			state.originalBounds.height
+		)
+
+		if (driver === 'width') {
+			// Width drives, calculate height from aspect ratio
+			height = width / aspectRatio
+		} else {
+			// Height drives, calculate width from aspect ratio
+			width = height * aspectRatio
+		}
+	}
+
+	// Enforce minimum size (maintaining aspect ratio if constrained)
+	if (aspectRatio !== undefined) {
+		// Calculate effective minimum considering aspect ratio
+		const minByWidth = minWidth
+		const minByHeight = minHeight * aspectRatio
+
+		if (width < minByWidth || height < minHeight) {
+			if (minByWidth >= minByHeight) {
+				width = minByWidth
+				height = width / aspectRatio
+			} else {
+				height = minHeight
+				width = height * aspectRatio
+			}
+		}
+	} else {
+		width = Math.max(width, minWidth)
+		height = Math.max(height, minHeight)
+	}
 
 	// Calculate position to keep anchor fixed
 	const position = calculateResizedPosition(
