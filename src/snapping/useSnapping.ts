@@ -9,6 +9,7 @@ import type {
 	SnapSpatialObject,
 	RotatedBounds,
 	ActiveSnap,
+	ActiveSnapEdge,
 	ScoredCandidate,
 	DEFAULT_SNAP_CONFIG
 } from './types'
@@ -44,6 +45,7 @@ export interface UseSnappingReturn {
 		position: Point
 		activeSnaps: ActiveSnap[]
 		candidates: ScoredCandidate[]
+		activeSnapEdges?: ActiveSnapEdge[]
 	}
 	snapResize: (params: SnapResizeParams) => {
 		bounds: Bounds
@@ -51,6 +53,7 @@ export interface UseSnappingReturn {
 		candidates: ScoredCandidate[]
 	}
 	activeSnaps: ActiveSnap[]
+	activeSnapEdges?: ActiveSnapEdge[]
 	allCandidates: ScoredCandidate[]
 	clearSnaps: () => void
 }
@@ -94,9 +97,10 @@ function normalizeDirection(delta: Point): Point {
 export function useSnapping(options: UseSnappingOptions): UseSnappingReturn {
 	const { objects, config, viewBounds, getParent } = options
 
-	// State for active snaps and candidates
+	// State for active snaps, candidates, and active snap edges
 	const [activeSnaps, setActiveSnaps] = React.useState<ActiveSnap[]>([])
 	const [allCandidates, setAllCandidates] = React.useState<ScoredCandidate[]>([])
+	const [activeSnapEdges, setActiveSnapEdges] = React.useState<ActiveSnapEdge[] | undefined>()
 
 	// Track recent positions for velocity calculation
 	const recentPositions = React.useRef<Point[]>([])
@@ -138,11 +142,13 @@ export function useSnapping(options: UseSnappingOptions): UseSnappingReturn {
 
 		setActiveSnaps(result.activeSnaps)
 		setAllCandidates(result.candidates)
+		setActiveSnapEdges(result.activeSnapEdges)
 
 		return {
 			position: result.snappedPosition,
 			activeSnaps: result.activeSnaps,
-			candidates: result.candidates
+			candidates: result.candidates,
+			activeSnapEdges: result.activeSnapEdges
 		}
 	}, [config, viewBounds, getParent])
 
@@ -185,6 +191,7 @@ export function useSnapping(options: UseSnappingOptions): UseSnappingReturn {
 	const clearSnaps = React.useCallback(() => {
 		setActiveSnaps([])
 		setAllCandidates([])
+		setActiveSnapEdges(undefined)
 		recentPositions.current = []
 	}, [])
 
@@ -192,6 +199,7 @@ export function useSnapping(options: UseSnappingOptions): UseSnappingReturn {
 		snapDrag,
 		snapResize,
 		activeSnaps,
+		activeSnapEdges,
 		allCandidates,
 		clearSnaps
 	}

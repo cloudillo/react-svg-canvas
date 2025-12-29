@@ -6,11 +6,13 @@ import * as React from 'react'
 import type { Bounds } from '../types'
 import type {
 	ActiveSnap,
+	ActiveSnapEdge,
 	ScoredCandidate,
 	SnapGuidesConfig,
 	SnapDebugConfig,
 	RotatedBounds,
-	SnapTarget
+	SnapTarget,
+	DistributionGap
 } from './types'
 
 export interface SnapGuidesProps {
@@ -20,6 +22,8 @@ export interface SnapGuidesProps {
 	debugConfig?: SnapDebugConfig
 	viewBounds: Bounds
 	draggedBounds?: RotatedBounds
+	/** Which snap edges are active based on grab point (for visual feedback) */
+	activeSnapEdges?: ActiveSnapEdge[]
 	/** Transform function to convert canvas coords to screen coords (for fixed layer rendering) */
 	transformPoint?: (x: number, y: number) => [number, number]
 }
@@ -107,6 +111,91 @@ function SourceBoundingBoxHighlight({
 }
 
 /**
+ * Render active snap edge indicators on the dragged object
+ * Shows lines along the edges that are being used for snapping
+ */
+function ActiveSnapEdgeIndicators({
+	activeSnapEdges,
+	draggedBounds,
+	config,
+	transformPoint
+}: {
+	activeSnapEdges: ActiveSnapEdge[]
+	draggedBounds: RotatedBounds
+	config: SnapGuidesConfig
+	transformPoint: (x: number, y: number) => [number, number]
+}) {
+	if (activeSnapEdges.length === 0) return null
+
+	const color = config.color
+	const extensionLength = 10  // How far to extend beyond the object bounds
+
+	return (
+		<g className="active-snap-edges">
+			{activeSnapEdges.map((edge, index) => {
+				// Calculate line along the full edge
+				let x1: number, y1: number, x2: number, y2: number
+
+				if (edge.axis === 'x') {
+					// Vertical edge (left, right, centerX)
+					// Draw a vertical line along the edge, extending beyond bounds
+					const edgeX = edge.position
+					x1 = edgeX
+					y1 = draggedBounds.y - extensionLength
+					x2 = edgeX
+					y2 = draggedBounds.y + draggedBounds.height + extensionLength
+				} else {
+					// Horizontal edge (top, bottom, centerY)
+					// Draw a horizontal line along the edge, extending beyond bounds
+					const edgeY = edge.position
+					x1 = draggedBounds.x - extensionLength
+					y1 = edgeY
+					x2 = draggedBounds.x + draggedBounds.width + extensionLength
+					y2 = edgeY
+				}
+
+				// Transform to screen coordinates
+				const [sx1, sy1] = transformPoint(x1, y1)
+				const [sx2, sy2] = transformPoint(x2, y2)
+
+				// Calculate midpoint for the diamond marker
+				const midX = (sx1 + sx2) / 2
+				const midY = (sy1 + sy2) / 2
+
+				return (
+					<g key={`snap-edge-${edge.edge}-${index}`}>
+						{/* White outline for contrast */}
+						<line
+							x1={sx1}
+							y1={sy1}
+							x2={sx2}
+							y2={sy2}
+							stroke="white"
+							strokeWidth={5}
+							strokeLinecap="round"
+						/>
+						{/* Colored line along the active snap edge */}
+						<line
+							x1={sx1}
+							y1={sy1}
+							x2={sx2}
+							y2={sy2}
+							stroke={color}
+							strokeWidth={3}
+							strokeLinecap="round"
+						/>
+						{/* White outline for diamond */}
+						<DiamondMarker x={midX} y={midY} size={10} color="white" />
+						{/* Diamond marker at the center of the edge */}
+						<DiamondMarker x={midX} y={midY} size={7} color={color} />
+					</g>
+				)
+			})}
+		</g>
+	)
+}
+
+/**
  * Main snap guides component - renders Figma-style red guide lines
  */
 export function SnapGuides({
@@ -116,9 +205,11 @@ export function SnapGuides({
 	debugConfig,
 	viewBounds,
 	draggedBounds,
+	activeSnapEdges,
 	transformPoint
 }: SnapGuidesProps) {
-	if (activeSnaps.length === 0 && (!debugConfig?.enabled || !allCandidates?.length)) {
+	const hasActiveContent = activeSnaps.length > 0 || (activeSnapEdges && activeSnapEdges.length > 0)
+	if (!hasActiveContent && (!debugConfig?.enabled || !allCandidates?.length)) {
 		return null
 	}
 
@@ -150,17 +241,41 @@ export function SnapGuides({
 				/>
 			))}
 
-			{/* Active snap guide lines */}
-			{activeSnaps.map((snap, index) => (
-				<SnapGuideLine
-					key={`active-${index}-${snap.target.axis}-${snap.target.value}`}
-					snap={snap}
-					config={config}
+			{/* Active snap edge indicators (show which edges are being used for snapping) */}
+			{activeSnapEdges && draggedBounds && (
+				<ActiveSnapEdgeIndicators
+					activeSnapEdges={activeSnapEdges}
 					draggedBounds={draggedBounds}
-					isActive={true}
+					config={config}
 					transformPoint={transform}
 				/>
-			))}
+			)}
+
+			{/* Active snap guide lines (exclude distribution snaps - they render their own gap indicators) */}
+			{activeSnaps
+				.filter(snap => !snap.distribution)
+				.map((snap, index) => (
+					<SnapGuideLine
+						key={`active-${index}-${snap.target.axis}-${snap.target.value}`}
+						snap={snap}
+						config={config}
+						draggedBounds={draggedBounds}
+						isActive={true}
+						transformPoint={transform}
+					/>
+				))}
+
+			{/* Distribution gap indicators */}
+			{activeSnaps
+				.filter(snap => snap.distribution)
+				.map((snap, index) => (
+					<DistributionGapsRenderer
+						key={`dist-${index}`}
+						snap={snap}
+						config={config}
+						transformPoint={transform}
+					/>
+				))}
 
 			{/* Debug overlay for candidates */}
 			{debugConfig?.enabled && allCandidates && (
@@ -194,6 +309,158 @@ function DiamondMarker({ x, y, size = 4, color }: { x: number; y: number; size?:
 			points={`${x},${y - half} ${x + half},${y} ${x},${y + half} ${x - half},${y}`}
 			fill={color}
 		/>
+	)
+}
+
+/**
+ * Distribution gap indicator with arrows and spacing label
+ */
+function DistributionGapIndicator({
+	gap,
+	color,
+	strokeWidth,
+	transformPoint
+}: {
+	gap: DistributionGap
+	color: string
+	strokeWidth: number
+	transformPoint: (x: number, y: number) => [number, number]
+}) {
+	const [x1, y1] = transformPoint(gap.start.x, gap.start.y)
+	const [x2, y2] = transformPoint(gap.end.x, gap.end.y)
+
+	const midX = (x1 + x2) / 2
+	const midY = (y1 + y2) / 2
+	const spacing = Math.round(gap.distance)
+
+	// Arrow size
+	const arrowSize = 5
+
+	const isHorizontal = gap.axis === 'x'
+
+	return (
+		<g>
+			{/* Gap line */}
+			<line
+				x1={x1}
+				y1={y1}
+				x2={x2}
+				y2={y2}
+				stroke={color}
+				strokeWidth={strokeWidth}
+			/>
+
+			{/* Arrow endpoints */}
+			{isHorizontal ? (
+				<>
+					{/* Left arrow */}
+					<polygon
+						points={`${x1},${y1} ${x1 + arrowSize},${y1 - arrowSize / 2} ${x1 + arrowSize},${y1 + arrowSize / 2}`}
+						fill={color}
+					/>
+					{/* Right arrow */}
+					<polygon
+						points={`${x2},${y2} ${x2 - arrowSize},${y2 - arrowSize / 2} ${x2 - arrowSize},${y2 + arrowSize / 2}`}
+						fill={color}
+					/>
+				</>
+			) : (
+				<>
+					{/* Top arrow */}
+					<polygon
+						points={`${x1},${y1} ${x1 - arrowSize / 2},${y1 + arrowSize} ${x1 + arrowSize / 2},${y1 + arrowSize}`}
+						fill={color}
+					/>
+					{/* Bottom arrow */}
+					<polygon
+						points={`${x2},${y2} ${x2 - arrowSize / 2},${y2 - arrowSize} ${x2 + arrowSize / 2},${y2 - arrowSize}`}
+						fill={color}
+					/>
+				</>
+			)}
+
+			{/* Spacing label */}
+			{spacing > 0 && (
+				<g>
+					{isHorizontal ? (
+						<>
+							<rect
+								x={midX - 15}
+								y={midY - 18}
+								width={30}
+								height={14}
+								fill="white"
+								fillOpacity={0.95}
+								rx={2}
+							/>
+							<text
+								x={midX}
+								y={midY - 7}
+								fontSize={10}
+								fill={color}
+								fontFamily="system-ui, sans-serif"
+								textAnchor="middle"
+							>
+								{spacing}
+							</text>
+						</>
+					) : (
+						<>
+							<rect
+								x={midX + 5}
+								y={midY - 7}
+								width={30}
+								height={14}
+								fill="white"
+								fillOpacity={0.95}
+								rx={2}
+							/>
+							<text
+								x={midX + 20}
+								y={midY + 4}
+								fontSize={10}
+								fill={color}
+								fontFamily="system-ui, sans-serif"
+								textAnchor="middle"
+							>
+								{spacing}
+							</text>
+						</>
+					)}
+				</g>
+			)}
+		</g>
+	)
+}
+
+/**
+ * Render all distribution gaps for an active snap
+ */
+function DistributionGapsRenderer({
+	snap,
+	config,
+	transformPoint
+}: {
+	snap: ActiveSnap
+	config: SnapGuidesConfig
+	transformPoint: (x: number, y: number) => [number, number]
+}) {
+	if (!snap.distribution || snap.distribution.gaps.length === 0) {
+		return null
+	}
+
+	return (
+		<g className="distribution-gaps">
+			{snap.distribution.gaps.map((gap, index) => (
+				<DistributionGapIndicator
+					key={`dist-gap-${index}`}
+					gap={gap}
+					color={config.color}
+					strokeWidth={config.strokeWidth}
+					transformPoint={transformPoint}
+				/>
+			))}
+		</g>
 	)
 }
 

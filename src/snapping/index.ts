@@ -11,6 +11,9 @@ export * from './rotation-utils'
 // Target generation
 export * from './snap-targets'
 
+// Distribution detection
+export * from './distribution-detection'
+
 // Core algorithm
 export * from './snap-engine'
 

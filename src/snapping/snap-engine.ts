@@ -13,6 +13,7 @@ import type {
 	ScoreBreakdown,
 	ScoredCandidate,
 	ActiveSnap,
+	ActiveSnapEdge,
 	DragSnapContext,
 	ResizeSnapContext,
 	SnapResult,
@@ -20,6 +21,41 @@ import type {
 } from './types'
 import { getSnapPoints, getAABB } from './rotation-utils'
 import { generateAllSnapTargets, getSizeTargets } from './snap-targets'
+import { detectDistribution, distributionToActiveSnap } from './distribution-detection'
+
+/**
+ * Select which snap edges to use based on where the user grabbed the object.
+ * Uses a threshold to determine edge zones vs center zone.
+ * @param grabPoint Normalized 0-1 position where user grabbed
+ * @param axis Which axis to get edges for
+ * @param threshold Zone size from edge (0.3 = 30% from each edge is edge zone)
+ * @returns Array of snap edges to use for this axis
+ */
+export function selectNearestSnapEdges(
+	grabPoint: Point,
+	axis: 'x' | 'y',
+	threshold: number = 0.3
+): SnapEdge[] {
+	const pos = axis === 'x' ? grabPoint.x : grabPoint.y
+
+	if (axis === 'x') {
+		if (pos < threshold) {
+			return ['left']
+		} else if (pos > 1 - threshold) {
+			return ['right']
+		} else {
+			return ['centerX']
+		}
+	} else {
+		if (pos < threshold) {
+			return ['top']
+		} else if (pos > 1 - threshold) {
+			return ['bottom']
+		} else {
+			return ['centerY']
+		}
+	}
+}
 
 /**
  * Get grab proximity weight for a snap edge based on where user grabbed the object
@@ -294,11 +330,42 @@ function createGuideEndpoints(
 
 /**
  * Get the relevant snap values from dragged bounds for a target axis
+ * @param snapPoints The snap points of the dragged object
+ * @param axis Which axis to get values for
+ * @param grabPoint Optional grab point to filter which snap edges to use
  */
 function getDragSnapValuesForAxis(
 	snapPoints: SnapPoints,
-	axis: 'x' | 'y'
+	axis: 'x' | 'y',
+	grabPoint?: Point
 ): { value: number; edge: SnapEdge }[] {
+	// If grab point provided, filter to only nearest snap edges
+	if (grabPoint) {
+		const nearestEdges = selectNearestSnapEdges(grabPoint, axis)
+		const result: { value: number; edge: SnapEdge }[] = []
+
+		for (const edge of nearestEdges) {
+			if (axis === 'x') {
+				if (edge === 'left') result.push({ value: snapPoints.left, edge })
+				else if (edge === 'right') result.push({ value: snapPoints.right, edge })
+				else if (edge === 'centerX') result.push({ value: snapPoints.centerX, edge })
+				else if (edge === 'pivotX' && snapPoints.pivotX !== undefined) {
+					result.push({ value: snapPoints.pivotX, edge })
+				}
+			} else {
+				if (edge === 'top') result.push({ value: snapPoints.top, edge })
+				else if (edge === 'bottom') result.push({ value: snapPoints.bottom, edge })
+				else if (edge === 'centerY') result.push({ value: snapPoints.centerY, edge })
+				else if (edge === 'pivotY' && snapPoints.pivotY !== undefined) {
+					result.push({ value: snapPoints.pivotY, edge })
+				}
+			}
+		}
+
+		return result
+	}
+
+	// Original behavior: return all snap points
 	if (axis === 'x') {
 		const values = [
 			{ value: snapPoints.left, edge: 'left' as SnapEdge },
@@ -349,9 +416,9 @@ export function computeSnap(
 		objectBoundsMap.set(obj.id, getAABB(obj))
 	}
 
-	// Generate all snap targets
+	// Generate all snap targets with geometric relevance filtering
 	const excludeIds = new Set([context.draggedId])
-	const targets = generateAllSnapTargets(objects, excludeIds, viewBounds, config)
+	const targets = generateAllSnapTargets(objects, excludeIds, viewBounds, config, context.draggedBounds)
 
 	// Get snap points from dragged bounds
 	const draggedSnapPoints = getSnapPoints(context.draggedBounds)
@@ -361,7 +428,7 @@ export function computeSnap(
 	const candidatesY: ScoredCandidate[] = []
 
 	for (const target of targets) {
-		const dragSnapValues = getDragSnapValuesForAxis(draggedSnapPoints, target.axis)
+		const dragSnapValues = getDragSnapValuesForAxis(draggedSnapPoints, target.axis, context.grabPoint)
 
 		for (const { value: dragValue, edge: dragEdge } of dragSnapValues) {
 			// Axis-separated distance
@@ -473,10 +540,96 @@ export function computeSnap(
 	const allCandidates = [...candidatesX, ...candidatesY]
 	allCandidates.sort((a, b) => b.score - a.score)
 
+	// Detect distribution patterns (equal spacing)
+	if (config.snapToDistribution) {
+		const distributionCandidates = detectDistribution(
+			context.draggedBounds,
+			context.draggedId,
+			objects,
+			excludeIds,
+			config
+		)
+
+		// Track which axes have been snapped by distribution
+		let hasDistributionX = false
+		let hasDistributionY = false
+
+		// Add distribution snaps to active snaps
+		// Allow both row (X) and column (Y) distributions to apply independently
+		for (const distCandidate of distributionCandidates) {
+			if (distCandidate.distance <= config.snapThreshold) {
+				const distSnap = distributionToActiveSnap(distCandidate, config)
+
+				// Apply distribution position based on pattern type
+				if (distCandidate.info.pattern === 'row' && !hasDistributionX) {
+					snappedX = distCandidate.position.x
+					hasDistributionX = true
+					activeSnaps.push(distSnap)
+				} else if (distCandidate.info.pattern === 'column' && !hasDistributionY) {
+					snappedY = distCandidate.position.y
+					hasDistributionY = true
+					activeSnaps.push(distSnap)
+				} else if (distCandidate.info.pattern === 'staircase') {
+					// Staircase affects both axes
+					if (!hasDistributionX) {
+						snappedX = distCandidate.position.x
+						hasDistributionX = true
+					}
+					if (!hasDistributionY) {
+						snappedY = distCandidate.position.y
+						hasDistributionY = true
+					}
+					activeSnaps.push(distSnap)
+				}
+
+				// Stop if both axes are handled
+				if (hasDistributionX && hasDistributionY) break
+			}
+		}
+	}
+
+	// Calculate active snap edges for visual feedback
+	// Use snapped position to get the actual edge positions
+	const snappedBounds: RotatedBounds = {
+		...context.draggedBounds,
+		x: snappedX,
+		y: snappedY
+	}
+	const snappedSnapPoints = getSnapPoints(snappedBounds)
+
+	const activeSnapEdges: ActiveSnapEdge[] = []
+
+	// Get X-axis active edges
+	const activeEdgesX = selectNearestSnapEdges(context.grabPoint, 'x')
+	for (const edge of activeEdgesX) {
+		let position: number
+		if (edge === 'left') position = snappedSnapPoints.left
+		else if (edge === 'right') position = snappedSnapPoints.right
+		else if (edge === 'centerX') position = snappedSnapPoints.centerX
+		else if (edge === 'pivotX' && snappedSnapPoints.pivotX !== undefined) position = snappedSnapPoints.pivotX
+		else continue
+
+		activeSnapEdges.push({ edge, position, axis: 'x' })
+	}
+
+	// Get Y-axis active edges
+	const activeEdgesY = selectNearestSnapEdges(context.grabPoint, 'y')
+	for (const edge of activeEdgesY) {
+		let position: number
+		if (edge === 'top') position = snappedSnapPoints.top
+		else if (edge === 'bottom') position = snappedSnapPoints.bottom
+		else if (edge === 'centerY') position = snappedSnapPoints.centerY
+		else if (edge === 'pivotY' && snappedSnapPoints.pivotY !== undefined) position = snappedSnapPoints.pivotY
+		else continue
+
+		activeSnapEdges.push({ edge, position, axis: 'y' })
+	}
+
 	return {
 		snappedPosition: { x: snappedX, y: snappedY },
 		activeSnaps,
-		candidates: allCandidates
+		candidates: allCandidates,
+		activeSnapEdges
 	}
 }
 

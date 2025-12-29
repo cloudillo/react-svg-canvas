@@ -5,9 +5,10 @@
 import type { Point, Bounds, ResizeHandle } from '../types'
 
 // Snap target types
-export type SnapType = 'edge' | 'center' | 'grid' | 'size'
+export type SnapType = 'edge' | 'center' | 'grid' | 'size' | 'distribution'
 export type SnapAxis = 'x' | 'y'
 export type SnapEdge = 'left' | 'right' | 'top' | 'bottom' | 'centerX' | 'centerY' | 'pivotX' | 'pivotY'
+export type DistributionPattern = 'row' | 'column' | 'staircase'
 
 /**
  * Represents a potential snap destination
@@ -34,6 +35,36 @@ export interface ActiveSnap {
 	sourceBounds?: Bounds
 	/** For size snaps: the matched size value */
 	matchedSize?: number
+	/** For distribution snaps: pattern metadata */
+	distribution?: DistributionSnapInfo
+}
+
+/**
+ * Distribution snap metadata for equal-spacing patterns
+ */
+export interface DistributionSnapInfo {
+	/** Type of distribution pattern */
+	pattern: DistributionPattern
+	/** IDs of all objects in the pattern (including dragged) */
+	objectIds: string[]
+	/** The equal spacing value between objects */
+	spacing: number
+	/** Visual gap indicators to render (between consecutive objects) */
+	gaps: DistributionGap[]
+}
+
+/**
+ * A single gap indicator for distribution visualization
+ */
+export interface DistributionGap {
+	/** Start point of the gap line */
+	start: Point
+	/** End point of the gap line */
+	end: Point
+	/** The spacing distance for this gap */
+	distance: number
+	/** Axis of the gap (for label positioning) */
+	axis: SnapAxis
 }
 
 /**
@@ -113,12 +144,26 @@ export interface ResizeSnapContext {
 }
 
 /**
+ * Active snap edge indicator for visual feedback
+ */
+export interface ActiveSnapEdge {
+	/** The edge being used for snapping */
+	edge: SnapEdge
+	/** Position of the edge in canvas coordinates */
+	position: number
+	/** The axis (x for left/right/centerX, y for top/bottom/centerY) */
+	axis: SnapAxis
+}
+
+/**
  * Result from snap computation
  */
 export interface SnapResult {
 	snappedPosition: Point
 	activeSnaps: ActiveSnap[]
 	candidates: ScoredCandidate[]
+	/** Which snap edges are active based on grab point (for visual feedback) */
+	activeSnapEdges?: ActiveSnapEdge[]
 }
 
 /**
@@ -143,6 +188,7 @@ export interface SnapWeights {
 	centerPriority: number
 	gridPriority: number
 	sizePriority: number
+	distributionPriority: number
 }
 
 /**
@@ -172,6 +218,7 @@ export interface SnapConfiguration {
 	snapToGrid: boolean
 	snapToObjects: boolean
 	snapToSizes: boolean
+	snapToDistribution: boolean
 	gridSize: number
 	snapThreshold: number
 	weights: SnapWeights
@@ -199,6 +246,7 @@ export const DEFAULT_SNAP_CONFIG: SnapConfiguration = {
 	snapToGrid: true,
 	snapToObjects: true,
 	snapToSizes: true,
+	snapToDistribution: true,
 	gridSize: 10,
 	snapThreshold: 8,
 	weights: {
@@ -210,7 +258,8 @@ export const DEFAULT_SNAP_CONFIG: SnapConfiguration = {
 		edgePriority: 1.2,
 		centerPriority: 1.0,
 		gridPriority: 0.8,
-		sizePriority: 0.9
+		sizePriority: 0.9,
+		distributionPriority: 1.1
 	},
 	guides: {
 		color: '#ff3366',
