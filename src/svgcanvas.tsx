@@ -132,6 +132,9 @@ export const SvgCanvas = React.forwardRef<SvgCanvasHandle, SvgCanvasProps>(funct
 	// Track animation frame for cancellation
 	const animationFrameRef = React.useRef<number | undefined>(undefined)
 
+	// Store onContextReady callback in ref to avoid infinite loops
+	const onContextReadyRef = React.useRef(onContextReady)
+
 	// Cancel any ongoing animation when user interacts
 	const cancelAnimation = React.useCallback(() => {
 		if (animationFrameRef.current !== undefined) {
@@ -205,10 +208,16 @@ export const SvgCanvas = React.forwardRef<SvgCanvasHandle, SvgCanvasProps>(funct
 		startDrag
 	}), [svgRef.current, matrix])
 
-	// Call onContextReady callback when context changes
+	// Keep onContextReady ref in sync
 	React.useEffect(() => {
-		if (onContextReady) {
-			onContextReady({
+		onContextReadyRef.current = onContextReady
+	}, [onContextReady])
+
+	// Call onContextReady callback when matrix changes
+	// Only depend on matrix - translateTo/translateFrom are derived from it
+	React.useEffect(() => {
+		if (onContextReadyRef.current) {
+			onContextReadyRef.current({
 				svg: svgRef.current || undefined,
 				matrix,
 				scale: matrix[0],
@@ -216,7 +225,7 @@ export const SvgCanvas = React.forwardRef<SvgCanvasHandle, SvgCanvasProps>(funct
 				translateFrom
 			})
 		}
-	}, [onContextReady, matrix, translateTo, translateFrom])
+	}, [matrix])
 
 	// Expose imperative handle
 	React.useImperativeHandle(ref, () => ({
