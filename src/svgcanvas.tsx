@@ -117,7 +117,8 @@ export const SvgCanvas = React.forwardRef<SvgCanvasHandle, SvgCanvasProps>(funct
 }, ref) {
 	const svgRef = React.useRef<SVGSVGElement>(null)
 	const [active, setActive] = React.useState<undefined>()
-	const [pan, setPan] = React.useState<{ lastX: number, lastY: number } | undefined>()
+	// Use ref for pan state to avoid React batching delays and enable window-level event handling
+	const panRef = React.useRef<{ lastX: number, lastY: number, pointerId: number } | null>(null)
 	const [drag, setDrag] = React.useState<{ target: any, startX: number, startY: number, lastX: number, lastY: number } | undefined>()
 	const [toolStart, setToolStart] = React.useState<{ startX: number, startY: number } | undefined>()
 	const [dragHandler, setDragHandler] = React.useState<DragHandler | undefined>()
@@ -138,6 +139,46 @@ export const SvgCanvas = React.forwardRef<SvgCanvasHandle, SvgCanvasProps>(funct
 			animationFrameRef.current = undefined
 		}
 	}, [])
+
+	// Window-level pan handler - uses refs for immediate updates without React batching
+	const handleWindowPan = React.useCallback((evt: PointerEvent) => {
+		const pan = panRef.current
+		if (!pan || evt.pointerId !== pan.pointerId) return
+
+		const dx = evt.clientX - pan.lastX
+		const dy = evt.clientY - pan.lastY
+		setMatrix(m => [m[0], m[1], m[2], m[3], m[4] + dx, m[5] + dy])
+		panRef.current = { lastX: evt.clientX, lastY: evt.clientY, pointerId: pan.pointerId }
+	}, [])
+
+	// Window-level pan end handler - cleans up window listeners
+	const handleWindowPanEnd = React.useCallback((evt: PointerEvent) => {
+		const pan = panRef.current
+		if (!pan || evt.pointerId !== pan.pointerId) return
+
+		panRef.current = null
+		window.removeEventListener('pointermove', handleWindowPan)
+		window.removeEventListener('pointerup', handleWindowPanEnd)
+		window.removeEventListener('pointercancel', handleWindowPanEnd)
+	}, [handleWindowPan])
+
+	// Start panning with window-level event listeners
+	const startPan = React.useCallback((evt: React.PointerEvent) => {
+		panRef.current = { lastX: evt.clientX, lastY: evt.clientY, pointerId: evt.pointerId }
+		window.addEventListener('pointermove', handleWindowPan)
+		window.addEventListener('pointerup', handleWindowPanEnd)
+		window.addEventListener('pointercancel', handleWindowPanEnd)
+	}, [handleWindowPan, handleWindowPanEnd])
+
+	// Stop panning and clean up window listeners (used when entering pinch-zoom or other cancellation)
+	const stopPan = React.useCallback(() => {
+		if (panRef.current) {
+			panRef.current = null
+			window.removeEventListener('pointermove', handleWindowPan)
+			window.removeEventListener('pointerup', handleWindowPanEnd)
+			window.removeEventListener('pointercancel', handleWindowPanEnd)
+		}
+	}, [handleWindowPan, handleWindowPanEnd])
 
 	const translateTo = React.useCallback(function traslateTo(x: number, y: number): [number, number] {
 		return [(x - matrix[4]) / matrix[0],( y - matrix[5]) / matrix[3]]
@@ -366,7 +407,7 @@ export const SvgCanvas = React.forwardRef<SvgCanvasHandle, SvgCanvasProps>(funct
 
 			// Cancel any active tool operation
 			setToolStart(undefined)
-			setPan(undefined)
+			stopPan()
 
 			evt.preventDefault()
 			evt.stopPropagation()
@@ -391,7 +432,7 @@ export const SvgCanvas = React.forwardRef<SvgCanvasHandle, SvgCanvasProps>(funct
 				setActive(undefined)
 				break
 			case 4: /* middle button */
-				setPan({ lastX: evt.clientX, lastY: evt.clientY })
+				startPan(evt)
 				break
 			}
 		} else {
@@ -404,7 +445,7 @@ export const SvgCanvas = React.forwardRef<SvgCanvasHandle, SvgCanvasProps>(funct
 				}
 			} else {
 				// No tool active - pan mode
-				setPan({ lastX: evt.clientX, lastY: evt.clientY })
+				startPan(evt)
 			}
 		}
 	}
@@ -457,18 +498,10 @@ export const SvgCanvas = React.forwardRef<SvgCanvasHandle, SvgCanvasProps>(funct
 			return
 		}
 
-		// Single pointer handling
+		// Single pointer handling (pan is handled by window-level events, not here)
 		if (dragHandler && toolStart) {
 			const e = transformPointerEvent(evt)
 			dragHandler.onDragMove({ x: e.x, y: e.y, startX: toolStart.startX, startY: toolStart.startY })
-		} else if (pan) {
-			const x = evt.clientX
-			const y = evt.clientY
-			const dx = x - pan.lastX
-			const dy = y - pan.lastY
-			setMatrix(matrix => [matrix[0], matrix[1], matrix[2], matrix[3], matrix[4] + dx, matrix[5] + dy])
-			setPan({ lastX: x, lastY: y })
-			evt.stopPropagation()
 		} else if (onToolMove && toolStart) {
 			const e = transformPointerEvent(evt)
 			if (e) {
@@ -478,7 +511,7 @@ export const SvgCanvas = React.forwardRef<SvgCanvasHandle, SvgCanvasProps>(funct
 
 		// Always call onMove for cursor tracking (when not panning/pinching)
 		// pointerCount <= 1 covers both hovering (0) and single pointer drag (1)
-		if (onMove && pointerCount <= 1 && !pan) {
+		if (onMove && pointerCount <= 1 && !panRef.current) {
 			const e = transformPointerEvent(evt)
 			if (e) {
 				onMove({ x: e.x, y: e.y, startX: e.x, startY: e.y })
@@ -538,7 +571,7 @@ export const SvgCanvas = React.forwardRef<SvgCanvasHandle, SvgCanvasProps>(funct
 		if (drag) drag?.target.onDragEnd?.()
 		if (onToolEnd) onToolEnd()
 		setDrag(undefined)
-		setPan(undefined)
+		stopPan()
 		setToolStart(undefined)
 	}
 
