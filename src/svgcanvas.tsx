@@ -54,6 +54,21 @@ export interface SvgCanvasHandle {
 	centerOn: (x: number, y: number, zoom?: number) => void
 	/** Center the viewport on a rectangle (fitting it in view) */
 	centerOnRect: (x: number, y: number, width: number, height: number, padding?: number) => void
+	/** Center the viewport on a rectangle with smooth animation */
+	centerOnRectAnimated: (
+		x: number,
+		y: number,
+		width: number,
+		height: number,
+		options?: {
+			duration?: number
+			padding?: number
+			/** Zoom out factor during transition (0-1, e.g. 0.15 = zoom out 15% at midpoint) */
+			zoomOutFactor?: number
+		}
+	) => void
+	/** Check if a rectangle's center is currently visible in the viewport */
+	isRectInView: (x: number, y: number, width: number, height: number) => boolean
 	/** Get current matrix */
 	getMatrix: () => [number, number, number, number, number, number]
 	/** Set matrix directly */
@@ -112,6 +127,17 @@ export const SvgCanvas = React.forwardRef<SvgCanvasHandle, SvgCanvasProps>(funct
 	const activePointersRef = React.useRef<Map<number, ActivePointer>>(new Map())
 	const lastPinchDistanceRef = React.useRef<number | undefined>(undefined)
 	const lastPinchCenterRef = React.useRef<{ x: number, y: number } | undefined>(undefined)
+
+	// Track animation frame for cancellation
+	const animationFrameRef = React.useRef<number | undefined>(undefined)
+
+	// Cancel any ongoing animation when user interacts
+	const cancelAnimation = React.useCallback(() => {
+		if (animationFrameRef.current !== undefined) {
+			cancelAnimationFrame(animationFrameRef.current)
+			animationFrameRef.current = undefined
+		}
+	}, [])
 
 	const translateTo = React.useCallback(function traslateTo(x: number, y: number): [number, number] {
 		return [(x - matrix[4]) / matrix[0],( y - matrix[5]) / matrix[3]]
@@ -187,9 +213,114 @@ export const SvgCanvas = React.forwardRef<SvgCanvasHandle, SvgCanvasProps>(funct
 
 			setMatrix([scale, 0, 0, scale, viewCenterX - targetCenterX * scale, viewCenterY - targetCenterY * scale])
 		},
+		centerOnRectAnimated: (
+			x: number,
+			y: number,
+			width: number,
+			height: number,
+			options?: { duration?: number; padding?: number; zoomOutFactor?: number }
+		) => {
+			const svg = svgRef.current
+			if (!svg) return
+
+			const duration = options?.duration ?? 350
+			const padding = options?.padding ?? 50
+			const zoomOutFactor = options?.zoomOutFactor ?? 0
+
+			const rect = svg.getBoundingClientRect()
+			const availableWidth = rect.width - padding * 2
+			const availableHeight = rect.height - padding * 2
+
+			// Calculate target scale to fit the rectangle
+			const scaleX = availableWidth / width
+			const scaleY = availableHeight / height
+			const targetScale = Math.min(scaleX, scaleY, 2) // Cap at 2x zoom
+
+			// Center of the target rectangle
+			const targetCenterX = x + width / 2
+			const targetCenterY = y + height / 2
+
+			// Center of the viewport
+			const viewCenterX = rect.width / 2
+			const viewCenterY = rect.height / 2
+
+			// Get current matrix for interpolation
+			const startMatrix = [...matrix] as [number, number, number, number, number, number]
+			const startScale = startMatrix[0]
+
+			// Calculate start center in canvas coords (reverse the matrix transform)
+			const startCenterX = (viewCenterX - startMatrix[4]) / startScale
+			const startCenterY = (viewCenterY - startMatrix[5]) / startScale
+
+			const startTime = performance.now()
+
+			// easeInOutCubic for smooth acceleration/deceleration (better for zoom-out transitions)
+			const easeInOutCubic = (t: number): number => {
+				return t < 0.5
+					? 4 * t * t * t
+					: 1 - Math.pow(-2 * t + 2, 3) / 2
+			}
+
+			// Cancel any existing animation
+			cancelAnimation()
+
+			const animate = (currentTime: number) => {
+				const elapsed = currentTime - startTime
+				const progress = Math.min(elapsed / duration, 1)
+				const eased = easeInOutCubic(progress)
+
+				// Interpolate center position
+				const currentCenterX = startCenterX + (targetCenterX - startCenterX) * eased
+				const currentCenterY = startCenterY + (targetCenterY - startCenterY) * eased
+
+				// Interpolate scale with optional zoom-out dip
+				// zoomOutDip creates a parabola that dips at t=0.5
+				// At t=0: dip=0, at t=0.5: dip=1, at t=1: dip=0
+				const zoomOutDip = 4 * progress * (1 - progress) * zoomOutFactor
+				const baseScale = startScale + (targetScale - startScale) * eased
+				const currentScale = baseScale * (1 - zoomOutDip)
+
+				// Calculate new matrix with interpolated values
+				const newMatrix: [number, number, number, number, number, number] = [
+					currentScale,
+					0,
+					0,
+					currentScale,
+					viewCenterX - currentCenterX * currentScale,
+					viewCenterY - currentCenterY * currentScale
+				]
+
+				setMatrix(newMatrix)
+
+				if (progress < 1) {
+					animationFrameRef.current = requestAnimationFrame(animate)
+				} else {
+					animationFrameRef.current = undefined
+				}
+			}
+
+			animationFrameRef.current = requestAnimationFrame(animate)
+		},
+		isRectInView: (x: number, y: number, width: number, height: number): boolean => {
+			const svg = svgRef.current
+			if (!svg) return false
+
+			const rect = svg.getBoundingClientRect()
+
+			// Calculate rect center in canvas coordinates
+			const rectCenterX = x + width / 2
+			const rectCenterY = y + height / 2
+
+			// Transform to screen coordinates using current matrix
+			const screenX = rectCenterX * matrix[0] + matrix[4]
+			const screenY = rectCenterY * matrix[3] + matrix[5]
+
+			// Check if center is within viewport bounds
+			return screenX >= 0 && screenX <= rect.width && screenY >= 0 && screenY <= rect.height
+		},
 		getMatrix: () => matrix,
 		setMatrix: (newMatrix) => setMatrix(newMatrix)
-	}), [matrix])
+	}), [matrix, cancelAnimation])
 
 	function transformPointerEvent(evt: React.PointerEvent) {
 		if (!svgRef.current) return { x: 0, y: 0, shiftKey: false, ctrlKey: false, metaKey: false, altKey: false }
@@ -208,6 +339,9 @@ export const SvgCanvas = React.forwardRef<SvgCanvasHandle, SvgCanvasProps>(funct
 	}
 
 	function onPointerDown(evt: React.PointerEvent) {
+		// Cancel any ongoing animation when user interacts
+		cancelAnimation()
+
 		// Track this pointer
 		activePointersRef.current.set(evt.pointerId, {
 			id: evt.pointerId,
@@ -409,6 +543,9 @@ export const SvgCanvas = React.forwardRef<SvgCanvasHandle, SvgCanvasProps>(funct
 	}
 
 	function onWheel(evt: React.WheelEvent) {
+		// Cancel any ongoing animation when user zooms
+		cancelAnimation()
+
 		const page = svgRef.current?.getBoundingClientRect() || { left: 0, top: 0 }
 		let scale = matrix[0]
 		if (scale < 10 && evt.deltaY < 0) {
