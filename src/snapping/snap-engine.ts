@@ -399,7 +399,8 @@ export function computeSnap(
 	objects: SnapSpatialObject[],
 	viewBounds: Bounds,
 	config: SnapConfiguration,
-	getParent?: (id: string) => string | undefined
+	getParent?: (id: string) => string | undefined,
+	customTargets?: SnapTarget[]
 ): SnapResult {
 	if (!config.enabled) {
 		return {
@@ -418,7 +419,9 @@ export function computeSnap(
 
 	// Generate all snap targets with geometric relevance filtering
 	const excludeIds = new Set([context.draggedId])
-	const targets = generateAllSnapTargets(objects, excludeIds, viewBounds, config, context.draggedBounds)
+	const generatedTargets = generateAllSnapTargets(objects, excludeIds, viewBounds, config, context.draggedBounds)
+	// Merge with custom targets (e.g., from table grids)
+	const targets = customTargets ? [...generatedTargets, ...customTargets] : generatedTargets
 
 	// Get snap points from dragged bounds
 	const draggedSnapPoints = getSnapPoints(context.draggedBounds)
@@ -641,7 +644,8 @@ export function computeResizeSnap(
 	objects: SnapSpatialObject[],
 	viewBounds: Bounds,
 	config: SnapConfiguration,
-	getParent?: (id: string) => string | undefined
+	getParent?: (id: string) => string | undefined,
+	customTargets?: SnapTarget[]
 ): ResizeSnapResult {
 	if (!config.enabled) {
 		return {
@@ -659,7 +663,9 @@ export function computeResizeSnap(
 	}
 
 	const excludeIds = new Set([context.objectId])
-	const targets = generateAllSnapTargets(objects, excludeIds, viewBounds, config)
+	const generatedTargets = generateAllSnapTargets(objects, excludeIds, viewBounds, config)
+	// Merge with custom targets (e.g., from table grids)
+	const targets = customTargets ? [...generatedTargets, ...customTargets] : generatedTargets
 
 	// For resize, we snap the edges being resized
 	const currentSnapPoints = getSnapPoints(context.currentBounds)

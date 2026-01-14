@@ -7,6 +7,7 @@ import type { Point, Bounds, ResizeHandle } from '../types'
 import type {
 	SnapConfiguration,
 	SnapSpatialObject,
+	SnapTarget,
 	RotatedBounds,
 	ActiveSnap,
 	ActiveSnapEdge,
@@ -21,6 +22,8 @@ export interface UseSnappingOptions {
 	config: SnapConfiguration
 	viewBounds: Bounds
 	getParent?: (id: string) => string | undefined
+	/** Additional snap targets (e.g., from table grids, guides) */
+	customTargets?: SnapTarget[]
 }
 
 export interface SnapDragParams {
@@ -95,7 +98,7 @@ function normalizeDirection(delta: Point): Point {
  * Hook for snapping during drag and resize operations
  */
 export function useSnapping(options: UseSnappingOptions): UseSnappingReturn {
-	const { objects, config, viewBounds, getParent } = options
+	const { objects, config, viewBounds, getParent, customTargets } = options
 
 	// State for active snaps, candidates, and active snap edges
 	const [activeSnaps, setActiveSnaps] = React.useState<ActiveSnap[]>([])
@@ -137,7 +140,8 @@ export function useSnapping(options: UseSnappingOptions): UseSnappingReturn {
 			objectsRef.current,
 			viewBounds,
 			config,
-			getParent
+			getParent,
+			customTargets
 		)
 
 		setActiveSnaps(result.activeSnaps)
@@ -150,7 +154,7 @@ export function useSnapping(options: UseSnappingOptions): UseSnappingReturn {
 			candidates: result.candidates,
 			activeSnapEdges: result.activeSnapEdges
 		}
-	}, [config, viewBounds, getParent])
+	}, [config, viewBounds, getParent, customTargets])
 
 	const snapResize = React.useCallback((params: SnapResizeParams) => {
 		const {
@@ -175,7 +179,8 @@ export function useSnapping(options: UseSnappingOptions): UseSnappingReturn {
 			objectsRef.current,
 			viewBounds,
 			config,
-			getParent
+			getParent,
+			customTargets
 		)
 
 		setActiveSnaps(result.activeSnaps)
@@ -186,7 +191,7 @@ export function useSnapping(options: UseSnappingOptions): UseSnappingReturn {
 			activeSnaps: result.activeSnaps,
 			candidates: result.candidates
 		}
-	}, [config, viewBounds, getParent])
+	}, [config, viewBounds, getParent, customTargets])
 
 	const clearSnaps = React.useCallback(() => {
 		setActiveSnaps([])
