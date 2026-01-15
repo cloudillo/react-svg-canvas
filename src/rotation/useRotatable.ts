@@ -15,7 +15,6 @@ import {
 	snapAngle,
 	getPivotPosition,
 	isInSnapZone,
-	getMaxDistanceFromPivot,
 	DEFAULT_SNAP_ANGLES,
 	DEFAULT_SNAP_ZONE_RATIO
 } from './rotation-utils'
@@ -62,6 +61,7 @@ export function useRotatable(options: RotatableOptions): UseRotatableReturn {
 	const {
 		bounds,
 		rotation,
+		screenArcRadius: screenArcRadiusOverride,
 		pivotX = 0.5,
 		pivotY = 0.5,
 		snapAngles = DEFAULT_SNAP_ANGLES,
@@ -118,10 +118,12 @@ export function useRotatable(options: RotatableOptions): UseRotatableReturn {
 		[bounds, pivotX, pivotY]
 	)
 
+	// Canvas-space arc radius (used for non-screen-space snap detection and return value)
 	const arcRadius = React.useMemo(() => {
-		const maxDist = getMaxDistanceFromPivot(bounds, pivotX, pivotY)
-		return maxDist + 25 // Add padding for handle
-	}, [bounds, pivotX, pivotY])
+		// Default: half diagonal + padding
+		const objectDiagonal = Math.sqrt(bounds.width * bounds.width + bounds.height * bounds.height)
+		return objectDiagonal / 2 + 25
+	}, [bounds])
 
 	// Check if a point is in the snap zone
 	// When screenSpaceSnapZone is true, expects screen-space point; otherwise canvas-space
@@ -186,12 +188,17 @@ export function useRotatable(options: RotatableOptions): UseRotatableReturn {
 				const screenPoint: Point = { x: e.clientX - rect.left, y: e.clientY - rect.top }
 				const [screenPivotX, screenPivotY] = currentTranslateFrom(pivot.x, pivot.y)
 				const screenPivot = { x: screenPivotX, y: screenPivotY }
-				// Calculate screen-space arc radius by transforming a point on the arc
-				const [screenArcPointX, screenArcPointY] = currentTranslateFrom(pivot.x + arcRadius, pivot.y)
-				screenArcRadius = Math.sqrt(
-					Math.pow(screenArcPointX - screenPivotX, 2) +
-					Math.pow(screenArcPointY - screenPivotY, 2)
-				)
+				// Use override if provided, otherwise calculate from canvas arc radius
+				if (opts.screenArcRadius !== undefined) {
+					screenArcRadius = opts.screenArcRadius
+				} else {
+					// Calculate screen-space arc radius by transforming a point on the arc
+					const [screenArcPointX, screenArcPointY] = currentTranslateFrom(pivot.x + arcRadius, pivot.y)
+					screenArcRadius = Math.sqrt(
+						Math.pow(screenArcPointX - screenPivotX, 2) +
+						Math.pow(screenArcPointY - screenPivotY, 2)
+					)
+				}
 				inSnapZone = isInSnapZone(screenPoint, screenPivot, screenArcRadius, opts.snapZoneRatio ?? DEFAULT_SNAP_ZONE_RATIO)
 			} else {
 				inSnapZone = isInSnapZone(canvasPoint, pivot, arcRadius, opts.snapZoneRatio ?? DEFAULT_SNAP_ZONE_RATIO)

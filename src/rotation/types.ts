@@ -54,6 +54,8 @@ export interface PivotState {
 	pivotY: number
 	/** If snapped, the snapped point coordinates (normalized) */
 	snappedPoint: Point | null
+	/** Initial pivot at drag start (for rendering rotated position) */
+	initialPivot: Point | null
 }
 
 /**
@@ -63,7 +65,8 @@ export const INITIAL_PIVOT_STATE: PivotState = {
 	isDragging: false,
 	pivotX: 0.5,
 	pivotY: 0.5,
-	snappedPoint: null
+	snappedPoint: null,
+	initialPivot: null
 }
 
 /**
@@ -121,6 +124,13 @@ export interface RotatableOptions {
 	bounds: Bounds
 	/** Current rotation in degrees */
 	rotation: number
+	/**
+	 * Override the arc radius in screen pixels.
+	 * When screenSpaceSnapZone is true, this value is used directly for snap detection
+	 * instead of converting from canvas coordinates.
+	 * This ensures the snap zone matches the visual RotationHandle exactly.
+	 */
+	screenArcRadius?: number
 	/** Pivot X (0-1 normalized), default 0.5 */
 	pivotX?: number
 	/** Pivot Y (0-1 normalized), default 0.5 */
@@ -219,7 +229,13 @@ export interface PivotDragOptions {
 	 * Returns { x: pivotX, y: pivotY } in normalized coordinates (0-1).
 	 */
 	getPivot?: () => Point
-	/** Called when pivot drag starts */
+	/**
+	 * Called immediately on pointer down, before any movement is detected.
+	 * Use this to set flags that prevent other handlers from running
+	 * (e.g., preventing canvas click from clearing selection).
+	 */
+	onPointerDown?: () => void
+	/** Called when pivot drag starts (after movement exceeds threshold) */
 	onDragStart?: (pivot: Point) => void
 	/** Called during pivot drag with current pivot and snap state */
 	onDrag?: (pivot: Point, snappedPoint: Point | null, positionCompensation: Point) => void

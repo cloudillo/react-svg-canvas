@@ -134,12 +134,10 @@ export function calculatePivotCompensation(
 	const dpx = oldPivot.x - newPivot.x
 	const dpy = oldPivot.y - newPivot.y
 
-	// If no rotation, compensation is simple translation
+	// No compensation needed for non-rotated objects
+	// Pivot only affects rotation center - with no rotation, visual position is unchanged
 	if (rotation === 0 || Math.abs(rotation) < 0.001) {
-		return {
-			x: bounds.width * dpx,
-			y: bounds.height * dpy
-		}
+		return { x: 0, y: 0 }
 	}
 
 	// For rotated objects, use the correct compensation formula

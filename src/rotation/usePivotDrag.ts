@@ -65,6 +65,7 @@ export function usePivotDrag(options: PivotDragOptions): UsePivotDragReturn {
 		snapPoints = DEFAULT_PIVOT_SNAP_POINTS,
 		snapThreshold = DEFAULT_PIVOT_SNAP_THRESHOLD,
 		translateTo: customTranslateTo,
+		onPointerDown,
 		onDragStart,
 		onDrag,
 		onDragEnd,
@@ -111,6 +112,9 @@ export function usePivotDrag(options: PivotDragOptions): UsePivotDragReturn {
 	const translateToRef = React.useRef(translateTo)
 	translateToRef.current = translateTo
 
+	// Movement threshold in canvas pixels to distinguish clicks from drags
+	const DRAG_THRESHOLD = 3
+
 	const stateRef = React.useRef<{
 		initialPivot: Point
 		currentPivot: Point
@@ -119,6 +123,7 @@ export function usePivotDrag(options: PivotDragOptions): UsePivotDragReturn {
 		initialRotation: number  // Captured at drag start
 		svg: SVGSVGElement | null
 		pointerId: number
+		dragStarted: boolean  // True once movement exceeds threshold
 	}>({
 		initialPivot: { x: pivotX, y: pivotY },
 		currentPivot: { x: pivotX, y: pivotY },
@@ -126,7 +131,8 @@ export function usePivotDrag(options: PivotDragOptions): UsePivotDragReturn {
 		initialBounds: { x: 0, y: 0, width: 100, height: 100 },
 		initialRotation: 0,
 		svg: null,
-		pointerId: -1
+		pointerId: -1,
+		dragStarted: false
 	})
 
 	// Calculate position compensation for a pivot change
@@ -141,8 +147,9 @@ export function usePivotDrag(options: PivotDragOptions): UsePivotDragReturn {
 		(e: React.PointerEvent) => {
 			if (disabled) return
 
-			e.preventDefault()
-			e.stopPropagation()
+			// Note: We intentionally don't call e.stopPropagation() or e.preventDefault() here.
+			// This allows clicks at the pivot point to reach objects below for selection/editing.
+			// We only "claim" the interaction once actual movement is detected in handlePointerMove.
 
 			const element = e.currentTarget as Element
 			const svg = (element as SVGElement).ownerSVGElement
@@ -180,19 +187,19 @@ export function usePivotDrag(options: PivotDragOptions): UsePivotDragReturn {
 				initialBounds: { ...currentBounds },
 				initialRotation: currentRotation,
 				svg,
-				pointerId: e.pointerId
+				pointerId: e.pointerId,
+				dragStarted: false  // Will be set true once movement exceeds threshold
 			}
 
-			setPivotState(prev => ({
-				...prev,
-				isDragging: true
-			}))
+			// Call onPointerDown immediately - this allows callers to set flags
+			// (e.g., to prevent canvas click from clearing selection)
+			optionsRef.current.onPointerDown?.()
 
-			onDragStart?.(initialPivot)
+			// Don't set isDragging: true or call onDragStart yet - wait for actual movement
 
 			const handlePointerMove = (moveEvent: PointerEvent) => {
 				// Use captured initial values to prevent stale closure issues
-				const { initialPivot, startPoint, initialBounds, initialRotation, svg, pointerId } = stateRef.current
+				const { initialPivot, startPoint, initialBounds, initialRotation, svg, pointerId, dragStarted } = stateRef.current
 				if (!svg || moveEvent.pointerId !== pointerId) return
 
 				const currentTranslateTo = translateToRef.current
@@ -206,6 +213,23 @@ export function usePivotDrag(options: PivotDragOptions): UsePivotDragReturn {
 				// Delta from start in canvas space
 				const dx = moveX - startPoint.x
 				const dy = moveY - startPoint.y
+
+				// Check if drag should start (movement exceeds threshold)
+				if (!dragStarted) {
+					const distance = Math.sqrt(dx * dx + dy * dy)
+					if (distance < DRAG_THRESHOLD) {
+						// Not enough movement yet - don't start drag
+						return
+					}
+					// Movement exceeds threshold - start the drag now
+					stateRef.current.dragStarted = true
+					setPivotState(prev => ({
+						...prev,
+						isDragging: true,
+						initialPivot
+					}))
+					optionsRef.current.onDragStart?.(initialPivot)
+				}
 
 				// Un-rotate delta to get movement in object-local space
 				// Formula from prezillo: localDx = dx * cos + dy * sin; localDy = -dx * sin + dy * cos
@@ -242,20 +266,32 @@ export function usePivotDrag(options: PivotDragOptions): UsePivotDragReturn {
 				// Update ref for use in handlePointerUp (state closure would be stale)
 				stateRef.current.currentPivot = snapResult.pivot
 
-				setPivotState({
-					isDragging: true,
+				setPivotState(prev => ({
+					...prev,
 					pivotX: snapResult.pivot.x,
 					pivotY: snapResult.pivot.y,
 					snappedPoint: snapResult.snappedPoint
-				})
+				}))
 
 				optionsRef.current.onDrag?.(snapResult.pivot, snapResult.snappedPoint, compensation)
 			}
 
 			const handlePointerUp = (upEvent: PointerEvent) => {
 				// Use captured initial values to prevent stale closure issues
-				const { initialPivot, currentPivot, initialBounds, initialRotation, pointerId } = stateRef.current
+				const { initialPivot, currentPivot, initialBounds, initialRotation, pointerId, dragStarted } = stateRef.current
 				if (upEvent.pointerId !== pointerId) return
+
+				// Clean up listeners first
+				window.removeEventListener('pointermove', handlePointerMove)
+				window.removeEventListener('pointerup', handlePointerUp)
+				window.removeEventListener('pointercancel', handlePointerUp)
+
+				// Only complete the drag if it actually started (movement exceeded threshold)
+				if (!dragStarted) {
+					// This was just a click - don't update pivot or call onDragEnd
+					// The click event will propagate to objects below
+					return
+				}
 
 				// Get final pivot from ref (state closure would be stale)
 				const finalPivot: Point = currentPivot
@@ -273,14 +309,11 @@ export function usePivotDrag(options: PivotDragOptions): UsePivotDragReturn {
 					pivotX: finalPivot.x,
 					pivotY: finalPivot.y,
 					isDragging: false,
-					snappedPoint: null
+					snappedPoint: null,
+					initialPivot: null
 				}))
 
 				optionsRef.current.onDragEnd?.(finalPivot, compensation)
-
-				window.removeEventListener('pointermove', handlePointerMove)
-				window.removeEventListener('pointerup', handlePointerUp)
-				window.removeEventListener('pointercancel', handlePointerUp)
 			}
 
 			window.addEventListener('pointermove', handlePointerMove)
