@@ -1,6 +1,6 @@
 {
   "name": "react-svg-canvas",
-  "version": "0.1.5",
+  "version": "0.1.7",
   "description": "React library for building interactive SVG canvas applications with pan, zoom, selection, drag-and-drop, resize, and Figma-style snapping",
   "type": "module",
   "main": "lib/index.js",
@@ -55,9 +55,9 @@
     "node": ">=18.0.0"
   },
   "devDependencies": {
-    "@types/react": "^19.2.7",
+    "@types/react": "^19.2.8",
     "@types/react-dom": "^19.2.3",
-    "react-dom": "^19.2.1",
+    "react-dom": "^19.2.3",
     "rimraf": "^6.1.2",
     "typescript": "^5.9.3"
   },
