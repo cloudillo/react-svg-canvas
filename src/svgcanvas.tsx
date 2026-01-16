@@ -118,7 +118,7 @@ export const SvgCanvas = React.forwardRef<SvgCanvasHandle, SvgCanvasProps>(funct
 	const svgRef = React.useRef<SVGSVGElement>(null)
 	const [active, setActive] = React.useState<undefined>()
 	// Use ref for pan state to avoid React batching delays and enable window-level event handling
-	const panRef = React.useRef<{ lastX: number, lastY: number, pointerId: number } | null>(null)
+	const panRef = React.useRef<{ lastX: number, lastY: number, pointerId: number, button: number } | null>(null)
 	const [drag, setDrag] = React.useState<{ target: any, startX: number, startY: number, lastX: number, lastY: number } | undefined>()
 	const [toolStart, setToolStart] = React.useState<{ startX: number, startY: number } | undefined>()
 	const [dragHandler, setDragHandler] = React.useState<DragHandler | undefined>()
@@ -148,10 +148,21 @@ export const SvgCanvas = React.forwardRef<SvgCanvasHandle, SvgCanvasProps>(funct
 		const pan = panRef.current
 		if (!pan || evt.pointerId !== pan.pointerId) return
 
+		// Check if button is still pressed (middle=4, primary=1)
+		const expectedButton = pan.button === 4 ? 4 : 1
+		if ((evt.buttons & expectedButton) === 0) {
+			// Button released outside window - stop panning
+			panRef.current = null
+			window.removeEventListener('pointermove', handleWindowPan)
+			window.removeEventListener('pointerup', handleWindowPanEnd)
+			window.removeEventListener('pointercancel', handleWindowPanEnd)
+			return
+		}
+
 		const dx = evt.clientX - pan.lastX
 		const dy = evt.clientY - pan.lastY
 		setMatrix(m => [m[0], m[1], m[2], m[3], m[4] + dx, m[5] + dy])
-		panRef.current = { lastX: evt.clientX, lastY: evt.clientY, pointerId: pan.pointerId }
+		panRef.current = { ...pan, lastX: evt.clientX, lastY: evt.clientY }
 	}, [])
 
 	// Window-level pan end handler - cleans up window listeners
@@ -167,7 +178,19 @@ export const SvgCanvas = React.forwardRef<SvgCanvasHandle, SvgCanvasProps>(funct
 
 	// Start panning with window-level event listeners
 	const startPan = React.useCallback((evt: React.PointerEvent) => {
-		panRef.current = { lastX: evt.clientX, lastY: evt.clientY, pointerId: evt.pointerId }
+		// Capture pointer for events even when outside window
+		try {
+			evt.currentTarget.setPointerCapture(evt.pointerId)
+		} catch (e) {
+			// Proceed without capture if it fails
+		}
+
+		panRef.current = {
+			lastX: evt.clientX,
+			lastY: evt.clientY,
+			pointerId: evt.pointerId,
+			button: evt.buttons
+		}
 		window.addEventListener('pointermove', handleWindowPan)
 		window.addEventListener('pointerup', handleWindowPanEnd)
 		window.addEventListener('pointercancel', handleWindowPanEnd)
@@ -609,6 +632,16 @@ export const SvgCanvas = React.forwardRef<SvgCanvasHandle, SvgCanvasProps>(funct
 		])
 	}
 
+	const onLostPointerCapture = React.useCallback((evt: React.PointerEvent) => {
+		const pan = panRef.current
+		if (pan && pan.pointerId === evt.pointerId) {
+			panRef.current = null
+			window.removeEventListener('pointermove', handleWindowPan)
+			window.removeEventListener('pointerup', handleWindowPanEnd)
+			window.removeEventListener('pointercancel', handleWindowPanEnd)
+		}
+	}, [handleWindowPan, handleWindowPanEnd])
+
 	return <SvgCanvasContext.Provider value={svgContext}>
 		<svg
 			ref={svgRef}
@@ -618,6 +651,7 @@ export const SvgCanvas = React.forwardRef<SvgCanvasHandle, SvgCanvasProps>(funct
 			onPointerMove={onPointerMove}
 			onPointerUp={onPointerUp}
 			onPointerCancel={onPointerCancel}
+			onLostPointerCapture={onLostPointerCapture}
 			onWheel={onWheel}
 		>
 			<g transform={`matrix(${matrix.map(x => Math.round(x * 1000) / 1000).join(' ')})`}>
