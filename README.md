@@ -86,6 +86,7 @@ function App() {
 | `onToolStart` | `(e: ToolEvent) => void` | Called on left mouse/touch start |
 | `onToolMove` | `(e: ToolEvent) => void` | Called during drag |
 | `onToolEnd` | `() => void` | Called on mouse/touch end |
+| `onMove` | `(e: ToolEvent) => void` | Called on pointer move (for cursor tracking) |
 | `onContextReady` | `(ctx: SvgCanvasContext) => void` | Called when context changes (zoom, pan) |
 
 #### Imperative Handle
@@ -98,6 +99,18 @@ canvasRef.current?.centerOn(100, 100, 1.5)  // x, y, optional zoom
 
 // Fit a rectangle in view
 canvasRef.current?.centerOnRect(0, 0, 500, 400, 50)  // x, y, w, h, padding
+
+// Animated viewport transition (smooth pan/zoom)
+canvasRef.current?.centerOnRectAnimated(0, 0, 500, 400, {
+  duration: 350,      // Animation duration in ms (default: 350)
+  padding: 50,        // Padding around rectangle (default: 50)
+  zoomOutFactor: 0.15 // Zoom out dip at midpoint, 0-1 (default: 0)
+})
+
+// Check if a rectangle's center is visible in viewport
+if (canvasRef.current?.isRectInView(100, 100, 200, 150)) {
+  console.log('Rectangle is visible')
+}
 
 // Get/set transform matrix
 const matrix = canvasRef.current?.getMatrix()
@@ -261,6 +274,30 @@ function ResizableRect({ bounds, onResize }) {
 }
 ```
 
+##### Aspect Ratio Constraint
+
+Maintain aspect ratio during resize (useful for images):
+
+```tsx
+const { handleResizeStart } = useResizable({
+  bounds,
+  aspectRatio: 16 / 9,  // Fixed ratio (width/height)
+  onResize: (e) => onResize(e.bounds)
+})
+
+// For CRDT/external state, use getter to avoid stale closures:
+const { handleResizeStart } = useResizable({
+  bounds,
+  getAspectRatio: () => yObject.get('aspectRatio'),  // Called at resize start
+  onResize: (e) => yObject.set('bounds', e.bounds)
+})
+```
+
+When `aspectRatio` is set, the resize behavior depends on the handle:
+- **Corner handles** (`nw`, `ne`, `sw`, `se`): Both dimensions scale proportionally
+- **Edge handles** (`n`, `s`): Height drives width
+- **Edge handles** (`e`, `w`): Width drives height
+
 ---
 
 ### Snapping System
@@ -365,6 +402,59 @@ const config: SnapConfiguration = {
   }
 }
 ```
+
+#### Custom Snap Targets
+
+Provide external snap targets (e.g., table grids, custom guides) via the `customTargets` option:
+
+```tsx
+const { snapDrag } = useSnapping({
+  objects,
+  config: DEFAULT_SNAP_CONFIG,
+  viewBounds,
+  customTargets: [
+    { type: 'edge', axis: 'x', value: 100, priority: 1.5 },  // Vertical guide at x=100
+    { type: 'edge', axis: 'y', value: 200, priority: 1.5 },  // Horizontal guide at y=200
+    { type: 'grid', axis: 'x', value: 50, priority: 0.8 },   // Grid line
+  ]
+})
+```
+
+**SnapTarget interface:**
+```tsx
+interface SnapTarget {
+  type: 'edge' | 'center' | 'grid' | 'size' | 'distribution'
+  axis: 'x' | 'y'
+  value: number              // Position on the axis
+  sourceObjectId?: string    // Optional source object reference
+  sourceEdge?: SnapEdge      // Which edge this target represents
+  priority: number           // Weight multiplier for scoring
+}
+```
+
+#### Distribution Snapping
+
+The snapping system automatically detects equal-spacing patterns between objects:
+
+- **Row distribution**: Objects aligned horizontally with equal gaps
+- **Column distribution**: Objects aligned vertically with equal gaps
+- **Staircase distribution**: Diagonal arrangements with equal spacing
+
+When a dragged object can complete or join an equal-spacing pattern, the snap system activates and shows visual gap indicators between objects.
+
+**Configuration:**
+```tsx
+const config: SnapConfiguration = {
+  // ...
+  snapToDistribution: true,      // Enable distribution snapping
+  weights: {
+    // ...
+    distributionPriority: 1.1    // Priority weight for distribution snaps
+  }
+}
+```
+
+Distribution snapping works automatically with no additional code required. Gap indicators are rendered by the `SnapGuides` component when `showDistanceIndicators` is enabled.
 
 ---
 
@@ -701,6 +791,10 @@ interface ToolEvent {
   startY: number
   x: number
   y: number
+  shiftKey?: boolean
+  ctrlKey?: boolean
+  metaKey?: boolean
+  altKey?: boolean
 }
 
 type ResizeHandle = 'nw' | 'n' | 'ne' | 'e' | 'se' | 's' | 'sw' | 'w'
