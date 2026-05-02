@@ -120,6 +120,14 @@ export interface UseResizableOptions {
 	 * Use this when working with CRDT/external state to avoid stale closures.
 	 */
 	getAspectRatio?: () => number | undefined
+
+	/**
+	 * When true, corner handles lock to the current bounds aspect ratio.
+	 * Edge handles remain free. Holding Shift during drag temporarily unlocks.
+	 * This is independent of `aspectRatio` — objects with explicit `aspectRatio`
+	 * are always locked regardless of this flag or Shift state.
+	 */
+	cornerAspectLock?: boolean
 }
 
 export interface UseResizableReturn {
@@ -129,6 +137,10 @@ export interface UseResizableReturn {
 	activeHandle: ResizeHandle | null
 	/** Handler to start resize from a handle */
 	handleResizeStart: (handle: ResizeHandle, e: React.PointerEvent) => void
+}
+
+function isCornerHandle(handle: ResizeHandle): boolean {
+	return handle === 'nw' || handle === 'ne' || handle === 'se' || handle === 'sw'
 }
 
 export function useResizable(options: UseResizableOptions): UseResizableReturn {
@@ -165,14 +177,16 @@ export function useResizable(options: UseResizableOptions): UseResizableReturn {
 		resizeState: ResizeState | null
 		element: Element | null
 		pointerId: number
-		currentBounds: Bounds  // Track current bounds for final commit
-		aspectRatio: number | undefined  // Captured at resize start
+		currentBounds: Bounds
+		explicitAspectRatio: number | undefined
+		cornerAspectRatio: number | undefined
 	}>({
 		resizeState: null,
 		element: null,
 		pointerId: -1,
 		currentBounds: { x: 0, y: 0, width: 0, height: 0 },
-		aspectRatio: undefined
+		explicitAspectRatio: undefined,
+		cornerAspectRatio: undefined
 	})
 
 	const optionsRef = React.useRef(options)
@@ -202,15 +216,21 @@ export function useResizable(options: UseResizableOptions): UseResizableReturn {
 			rotation
 		)
 
-		// Capture aspect ratio at resize start (from getter if provided, else from prop)
-		const aspectRatio = optionsRef.current.getAspectRatio?.() ?? optionsRef.current.aspectRatio
+		// Capture explicit aspect ratio (always enforced, not toggleable by Shift)
+		const explicitAspectRatio = optionsRef.current.getAspectRatio?.() ?? optionsRef.current.aspectRatio
+
+		// Capture corner aspect ratio (only for corner handles when cornerAspectLock is true)
+		const cornerAspectRatio = (!explicitAspectRatio && optionsRef.current.cornerAspectLock && isCornerHandle(handle) && bounds.height > 0)
+			? bounds.width / bounds.height
+			: undefined
 
 		stateRef.current = {
 			resizeState,
 			element,
 			pointerId: e.pointerId,
 			currentBounds: { ...bounds },
-			aspectRatio
+			explicitAspectRatio,
+			cornerAspectRatio
 		}
 
 		setIsResizing(true)
@@ -222,7 +242,7 @@ export function useResizable(options: UseResizableOptions): UseResizableReturn {
 		})
 
 		const handlePointerMove = (moveEvent: PointerEvent) => {
-			const { resizeState, element, pointerId, aspectRatio } = stateRef.current
+			const { resizeState, element, pointerId, explicitAspectRatio, cornerAspectRatio } = stateRef.current
 			if (!resizeState || !element || moveEvent.pointerId !== pointerId) return
 
 			const opts = optionsRef.current
@@ -236,13 +256,18 @@ export function useResizable(options: UseResizableOptions): UseResizableReturn {
 			const deltaX = moveCoords.x - resizeState.startX
 			const deltaY = moveCoords.y - resizeState.startY
 
+			// Explicit aspect ratio (images, etc.) is always enforced
+			// Corner aspect ratio is toggled off by Shift
+			const effectiveAspectRatio = explicitAspectRatio
+				?? (cornerAspectRatio && !moveEvent.shiftKey ? cornerAspectRatio : undefined)
+
 			// Calculate new bounds (rotation-aware, with aspect ratio constraint if provided)
 			let newBounds = calculateResizeBounds(
 				resizeState,
 				{ x: moveCoords.x, y: moveCoords.y },
 				opts.minWidth ?? 10,
 				opts.minHeight ?? 10,
-				aspectRatio
+				effectiveAspectRatio
 			)
 
 			// Apply snapping if available
@@ -295,7 +320,8 @@ export function useResizable(options: UseResizableOptions): UseResizableReturn {
 				element: null,
 				pointerId: -1,
 				currentBounds: { x: 0, y: 0, width: 0, height: 0 },
-				aspectRatio: undefined
+				explicitAspectRatio: undefined,
+				cornerAspectRatio: undefined
 			}
 			setIsResizing(false)
 			setActiveHandle(null)
