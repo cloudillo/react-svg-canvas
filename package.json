@@ -22,8 +22,8 @@
     "build": "tsc",
     "watch": "tsc -w",
     "clean": "rimraf .cache lib",
-    "prepublishOnly": "npm run build",
-    "pub": "npm publish --access public"
+    "prepublishOnly": "pnpm run build",
+    "pub": "pnpm publish --access public"
   },
   "keywords": [
     "react",
