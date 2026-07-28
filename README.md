@@ -80,7 +80,8 @@ function App() {
 | Prop | Type | Description |
 |------|------|-------------|
 | `className` | `string` | CSS class for the SVG element |
-| `style` | `CSSProperties` | Inline styles for the SVG element |
+| `style` | `CSSProperties` | Inline styles for the SVG element. `touchAction: 'none'` is always forced (pan/pinch are driven from raw pointer events); `outline`, `user-select` and `-webkit-touch-callout` are set as defaults you can override |
+| `tabIndex` | `number` | Tab index for the `<svg>`; defaults to `-1` |
 | `children` | `ReactNode` | Content rendered in canvas space (pan/zoom applied) |
 | `fixed` | `ReactNode` | Content rendered in screen space (UI overlays) |
 | `onToolStart` | `(e: ToolEvent) => void` | Called on left mouse/touch start |
@@ -126,6 +127,23 @@ canvasRef.current?.setMatrix([1, 0, 0, 1, 0, 0])
 | Mouse wheel | Zoom in/out |
 | Single touch | Tool events or pan |
 | Two-finger pinch | Zoom |
+
+#### Focus & keyboard
+
+- The canvas takes DOM focus itself on pointerdown. `tabIndex` defaults to `-1`, so the `<svg>` is
+  focusable by pointer and script but is not a tab stop — pass `tabIndex={0}` to make it tab-reachable
+  (and supply your own `outline` via `style` if you want a focus ring).
+- A pointerdown that lands on a focusable or editable element **inside** the canvas — inputs, textareas,
+  selects, buttons, links, `contenteditable` elements, anything with a `[tabindex]`, typically inside a
+  `<foreignObject>` — is left entirely to the browser: it keeps its own focus and starts no canvas tool
+  or pan gesture. Only descendants of the `<svg>` qualify, so wrapping the canvas in your own focusable
+  container (`<div tabIndex={0}>`) is safe and does not suppress canvas gestures.
+- Editable elements inside a `<foreignObject>` keep `user-select: text`; everything else in the canvas is
+  unselectable, so drags across rendered text produce no selection artifacts.
+
+**Behavior change vs. 0.1.8:** clicking the canvas now moves focus to the `<svg>`, so a host-owned overlay
+input that previously kept focus through a canvas click will now blur (firing its `blur`/save handlers).
+Hosts that want to keep focus should call `stopPropagation()` in their own pointerdown handler.
 
 ---
 

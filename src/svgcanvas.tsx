@@ -90,6 +90,8 @@ interface SvgCanvasProps {
 	onMove?: (e: ToolEvent) => void
 	/** Callback fired when the canvas context is ready or changes (zoom, pan, etc.) */
 	onContextReady?: (context: SvgCanvasContext) => void
+	/** Tab index for the `<svg>`. Defaults to -1: focusable via pointer/script but not a tab stop. */
+	tabIndex?: number
 }
 
 interface DragHandler {
@@ -104,6 +106,28 @@ interface ActivePointer {
 	y: number
 }
 
+/**
+ * Focusable/editable elements a host may place inside the canvas, typically in a `<foreignObject>`.
+ * A pointerdown on one is left entirely to the browser: the default action must run for the caret to
+ * land, and no canvas gesture may start from it.
+ *
+ * Elsewhere the default is cancelled and the `<svg>` focuses itself - the default would otherwise
+ * focus the nearest focusable ancestor of the `<svg>`, blurring a text overlay that the same gesture
+ * just opened, before it is ever painted.
+ *
+ * Matching is scoped to the canvas subtree. Widening it to the ancestor chain would make a host
+ * wrapper with `tabIndex={0}` match every pointerdown and disable all canvas gestures.
+ */
+const SELF_FOCUSING_SELECTOR =
+	'input, textarea, select, button, a[href], [contenteditable]:not([contenteditable="false" i]), [tabindex]:not([tabindex="-1"])'
+
+function isSelfFocusingTarget(target: EventTarget | null, root: Element | null): boolean {
+	if (!(target instanceof Element) || !root) return false
+	const match = target.closest(SELF_FOCUSING_SELECTOR)
+	// match !== root: a host-set tabIndex on the <svg> itself must not disable the canvas.
+	return !!match && match !== root && root.contains(match)
+}
+
 export const SvgCanvas = React.forwardRef<SvgCanvasHandle, SvgCanvasProps>(function SvgCanvas({
 	className,
 	style,
@@ -113,7 +137,8 @@ export const SvgCanvas = React.forwardRef<SvgCanvasHandle, SvgCanvasProps>(funct
 	onToolMove,
 	onToolEnd,
 	onMove,
-	onContextReady
+	onContextReady,
+	tabIndex = -1
 }, ref) {
 	const svgRef = React.useRef<SVGSVGElement>(null)
 	const [active, setActive] = React.useState<undefined>()
@@ -446,9 +471,12 @@ export const SvgCanvas = React.forwardRef<SvgCanvasHandle, SvgCanvasProps>(funct
 			return
 		}
 
-		// Single pointer handling
-		evt.preventDefault()
 		evt.stopPropagation()
+		// The target owns this gesture, default action included; see SELF_FOCUSING_SELECTOR.
+		if (isSelfFocusingTarget(evt.target, svgRef.current)) return
+
+		evt.preventDefault()
+		svgRef.current?.focus({ preventScroll: true })
 
 		// Check if this is a touch event (pointerType === 'touch') or mouse
 		if (evt.pointerType === 'mouse') {
@@ -646,7 +674,18 @@ export const SvgCanvas = React.forwardRef<SvgCanvasHandle, SvgCanvasProps>(funct
 		<svg
 			ref={svgRef}
 			className={className}
-			style={{...style, touchAction: 'none'}}
+			tabIndex={tabIndex}
+			style={{
+				// Overridable defaults: no focus ring (focus comes from the pointer, not Tab), no
+				// text selection or iOS long-press callout during gestures.
+				outline: 'none',
+				userSelect: 'none',
+				WebkitUserSelect: 'none',
+				WebkitTouchCallout: 'none',
+				...style,
+				// Not overridable: pan/pinch are driven from raw pointer events.
+				touchAction: 'none'
+			}}
 			onPointerDown={onPointerDown}
 			onPointerMove={onPointerMove}
 			onPointerUp={onPointerUp}
@@ -654,6 +693,12 @@ export const SvgCanvas = React.forwardRef<SvgCanvasHandle, SvgCanvasProps>(funct
 			onLostPointerCapture={onLostPointerCapture}
 			onWheel={onWheel}
 		>
+			{/* Give editable content back the text selection the canvas-wide user-select: none removes. */}
+			<style>{
+				'foreignObject input, foreignObject textarea, foreignObject select,'
+				+ ' foreignObject [contenteditable]:not([contenteditable="false" i])'
+				+ ' { user-select: text; -webkit-user-select: text }'
+			}</style>
 			<g transform={`matrix(${matrix.map(x => Math.round(x * 1000) / 1000).join(' ')})`}>
 				{children}
 			</g>
